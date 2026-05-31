@@ -1,0 +1,13 @@
+{
+  "name": "tactical-radio-software",
+  "private": true,
+  "workspaces": [
+    "apps/bridge-server",
+    "packages/protocol"
+  ],
+  "scripts": {
+    "dev:server": "npm --workspace apps/bridge-server run dev",
+    "build:server": "npm --workspace apps/bridge-server run build",
+    "start:server": "npm --workspace apps/bridge-server run start"
+  }
+}

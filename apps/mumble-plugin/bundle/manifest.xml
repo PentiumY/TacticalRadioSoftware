@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<bundle version="1.0.0">
+  <assets>
+    <plugin os="windows" arch="x64">windows-x64/tactical_radio_mumble_plugin.dll</plugin>
+  </assets>
+  <name>Tactical Radio Bridge</name>
+  <version>0.1.0</version>
+</bundle>

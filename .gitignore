@@ -95,6 +95,6 @@ playwright-report/
 
 # External dependencies / vendored plugin SDKs
 apps/mumble-plugin/external/*
+!apps/mumble-plugin/external/
 !apps/mumble-plugin/external/.gitkeep
-!apps/mumble-plugin/external/mumble-plugin-cpp/
-!apps/mumble-plugin/external/mumble-plugin-cpp/**
+!apps/mumble-plugin/external/mumble-plugin-cpp
