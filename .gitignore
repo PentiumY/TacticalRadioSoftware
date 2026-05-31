@@ -1,0 +1,100 @@
+# Dependencies
+
+node_modules/
+.pnpm-store/
+.yarn/
+.npm/
+
+# Build output
+
+dist/
+build/
+out/
+coverage/
+
+# TypeScript
+
+*.tsbuildinfo
+
+# Environment files
+
+.env
+.env.*
+!.env.example
+
+# Logs
+
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+
+# OS/editor files
+
+.DS_Store
+Thumbs.db
+.vscode/*
+!.vscode/extensions.json
+!.vscode/settings.json
+.idea/
+
+# CMake / C++ build artifacts
+
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+compile_commands.json
+CTestTestfile.cmake
+Testing/
+
+# Mumble plugin build
+
+apps/mumble-plugin/build/
+apps/mumble-plugin/bin/
+apps/mumble-plugin/lib/
+
+# Native binaries
+
+*.dll
+*.dylib
+*.so
+*.a
+*.lib
+*.obj
+*.o
+*.exe
+*.pdb
+*.ilk
+*.exp
+
+# Roblox tooling
+
+*.rbxl.lock
+*.rbxlx.lock
+sourcemap.json
+
+# Temporary files
+
+tmp/
+temp/
+.cache/
+.parcel-cache/
+
+# Docker / local infra
+
+docker-data/
+infra/data/
+
+# Test artifacts
+
+junit.xml
+test-results/
+playwright-report/
+
+# External dependencies / vendored plugin SDKs
+apps/mumble-plugin/external/*
+!apps/mumble-plugin/external/.gitkeep
+!apps/mumble-plugin/external/mumble-plugin-cpp/
+!apps/mumble-plugin/external/mumble-plugin-cpp/**

@@ -1,0 +1,3 @@
+[submodule "apps/mumble-plugin/external/mumble-plugin-cpp"]
+	path = apps/mumble-plugin/external/mumble-plugin-cpp
+	url = https://github.com/mumble-voip/mumble-plugin-cpp.git
