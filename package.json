@@ -8,6 +8,7 @@
   "scripts": {
     "dev:server": "npm --workspace apps/bridge-server run dev",
     "build:server": "npm --workspace apps/bridge-server run build",
-    "start:server": "npm --workspace apps/bridge-server run start"
+    "start:server": "npm --workspace apps/bridge-server run start",
+    "installer": "powershell -NoProfile -ExecutionPolicy Bypass -File ./build-installer.ps1"
   }
 }

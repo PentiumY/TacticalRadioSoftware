@@ -12,6 +12,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Must be set BEFORE add_subdirectory(external/mumble-plugin-cpp)
 set(positional-audio ON CACHE BOOL "Enable positional audio callbacks" FORCE)
 set(server-event-callbacks ON CACHE BOOL "Enable server event callbacks" FORCE)
+set(audio-callbacks ON CACHE BOOL "Enable audio callbacks" FORCE)
 
 add_subdirectory(
   external/mumble-plugin-cpp
@@ -21,6 +22,7 @@ add_subdirectory(
 target_compile_definitions(mumble_plugin_cpp_wrapper PUBLIC
   MUMBLE_PLUGIN_WRAPPER_USE_POSITIONAL_AUDIO
   MUMBLE_PLUGIN_WRAPPER_USE_SERVER_EVENT_CALLBACKS
+  MUMBLE_PLUGIN_WRAPPER_USE_AUDIO_CALLBACKS
 )
 
 include(FetchContent)
@@ -45,7 +47,29 @@ find_package(OpenSSL REQUIRED)
 
 add_library(tactical_radio_mumble_plugin SHARED
   src/TacticalRadioPlugin.cpp
+
   src/BridgeClient.cpp
+  src/BridgeClient.hpp
+  src/BridgeConfig.hpp
+  src/SharedState.hpp
+
+  src/PluginLogger.cpp
+  src/PluginLogger.hpp
+
+  src/MumbleIdentity.cpp
+  src/MumbleIdentity.hpp
+
+  src/PositionalCache.cpp
+  src/PositionalCache.hpp
+
+  src/PluginDiagnostics.cpp
+  src/PluginDiagnostics.hpp
+
+  src/RadioRouter.cpp
+  src/RadioRouter.hpp
+
+  src/AudioRadioEffects.cpp
+  src/AudioRadioEffects.hpp
 )
 
 target_include_directories(tactical_radio_mumble_plugin PRIVATE

@@ -12,6 +12,17 @@ struct Vec3 {
     float z = 0.0f;
 };
 
+struct RadioSlot {
+    int id = 0;
+    std::string channel;
+    bool listening = false;
+    bool transmitting = false;
+    std::string ear = "both";
+    float volume = 1.0f;
+    float minDistance = 0.0f;
+    float maxDistance = 3000.0f;
+};
+
 struct PlayerRadioState {
     std::uint64_t robloxUserId = 0;
     std::string username;
@@ -26,7 +37,8 @@ struct PlayerRadioState {
     std::string team;
     std::string squad;
     std::string radioId;
-
+    std::vector<RadioSlot> radios;
+    
     std::uint64_t updatedAtMs = 0;
 };
 

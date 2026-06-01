@@ -71,6 +71,27 @@ static PlayerRadioState parsePlayer(const json& value) {
 
     player.updatedAtMs = value.value("updatedAtMs", 0ULL);
 
+    player.radios.clear();
+
+    if (value.contains("radios") && value.at("radios").is_array()) {
+        for (const auto& radioJson : value.at("radios")) {
+            RadioSlot radio;
+
+            radio.id = radioJson.value("id", 0);
+            radio.channel = radioJson.value("channel", "");
+            radio.listening = radioJson.value("listening", false);
+            radio.transmitting = radioJson.value("transmitting", false);
+            radio.ear = radioJson.value("ear", "both");
+            radio.volume = radioJson.value("volume", 1.0f);
+            radio.minDistance = radioJson.value("minDistance", 0.0f);
+            radio.maxDistance = radioJson.value("maxDistance", 3000.0f);
+
+            if (!radio.channel.empty()) {
+                player.radios.push_back(std::move(radio));
+            }
+        }
+    }
+
     return player;
 }
 
