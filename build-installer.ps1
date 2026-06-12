@@ -277,6 +277,7 @@ if (-not $SkipLauncherBuild) {
     & $LauncherBuildScript `
         -Configuration $Configuration `
         -OutputPath $LauncherPublishDir `
+        -Version $Version `
         -Clean
 
     if (-not $?) {
