@@ -1,42 +1,42 @@
 param(
-[Parameter(Mandatory = $true)]
-[string]$Version,
+    [Parameter(Mandatory = $true)]
+    [string]$Version,
 
-[string]$Configuration = "Release",
+    [string]$Configuration = "Release",
 
-[string]$ReleaseNotes = "",
+    [string]$ReleaseNotes = "",
 
-[string]$ReleaseNotesFile = "",
+    [string]$ReleaseNotesFile = "",
 
-[switch]$Draft,
+    [switch]$Draft,
 
-[switch]$Prerelease,
+    [switch]$Prerelease,
 
-[switch]$SkipBuild,
+    [switch]$SkipBuild,
 
-[switch]$SkipCommit,
+    [switch]$SkipCommit,
 
-[switch]$SkipPush,
+    [switch]$SkipPush,
 
-[switch]$SkipTag,
+    [switch]$SkipTag,
 
-[switch]$SkipRelease,
+    [switch]$SkipRelease,
 
-[switch]$ReplaceExistingAsset,
+    [switch]$ReplaceExistingAsset,
 
-[switch]$Sign,
+    [switch]$Sign,
 
-[string]$CertificatePath = "",
+    [string]$CertificatePath = "",
 
-[string]$CertificatePassword = "",
+    [string]$CertificatePassword = "",
 
-[string]$CertificateThumbprint = "",
+    [string]$CertificateThumbprint = "",
 
-[switch]$UseMachineStore,
+    [switch]$UseMachineStore,
 
-[string]$SignToolPath = "",
+    [string]$SignToolPath = "",
 
-[string]$TimestampUrl = "http://timestamp.digicert.com"
+    [string]$TimestampUrl = "http://timestamp.digicert.com"
 )
 
 $ErrorActionPreference = "Stop"
@@ -47,20 +47,20 @@ $BuildInstallerScript = Join-Path $Root "build-installer.ps1"
 
 function Invoke-ExternalChecked {
     param(
-    [Parameter(Mandatory = $true)]
-    [string]$FilePath,
-    
-    [Parameter(Mandatory = $true)]
-    [string[]]$Arguments
+        [Parameter(Mandatory = $true)]
+        [string]$FilePath,
+
+        [Parameter(Mandatory = $true)]
+        [string[]]$Arguments
     )
-    
+
     Write-Host ""
     Write-Host "Running:"
     Write-Host "  $FilePath $($Arguments -join ' ')"
     Write-Host ""
-    
+
     & $FilePath @Arguments
-    
+
     if ($LASTEXITCODE -ne 0) {
         throw "Command failed with exit code $LASTEXITCODE`: $FilePath $($Arguments -join ' ')"
     }
@@ -68,24 +68,24 @@ function Invoke-ExternalChecked {
 
 function Invoke-PowerShellScriptChecked {
     param(
-    [Parameter(Mandatory = $true)]
-    [string]$ScriptPath,
-    
-    [Parameter(Mandatory = $true)]
-    [hashtable]$Parameters
+        [Parameter(Mandatory = $true)]
+        [string]$ScriptPath,
+
+        [Parameter(Mandatory = $true)]
+        [hashtable]$Parameters
     )
-    
+
     if (-not (Test-Path $ScriptPath)) {
         throw "PowerShell script was not found: $ScriptPath"
     }
-    
+
     Write-Host ""
     Write-Host "Running PowerShell script:"
     Write-Host "  $ScriptPath"
-    
+
     foreach ($key in ($Parameters.Keys | Sort-Object)) {
         $value = $Parameters[$key]
-        
+
         if ($value -is [switch] -or $value -is [bool]) {
             Write-Host "  -$key $value"
         }
@@ -93,11 +93,11 @@ function Invoke-PowerShellScriptChecked {
             Write-Host "  -$key `"$value`""
         }
     }
-    
+
     Write-Host ""
-    
+
     & $ScriptPath @Parameters
-    
+
     if (-not $?) {
         throw "PowerShell script failed: $ScriptPath"
     }
@@ -105,17 +105,17 @@ function Invoke-PowerShellScriptChecked {
 
 function Assert-Command {
     param(
-    [Parameter(Mandatory = $true)]
-    [string]$Name,
-    
-    [Parameter(Mandatory = $true)]
-    [string]$InstallHint
+        [Parameter(Mandatory = $true)]
+        [string]$Name,
+
+        [Parameter(Mandatory = $true)]
+        [string]$InstallHint
     )
-    
+
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw @"
 Required command was not found: $Name
-        
+
 $InstallHint
 "@
     }
@@ -123,88 +123,171 @@ $InstallHint
 
 function Normalize-ReleaseVersion {
     param(
-    [Parameter(Mandatory = $true)]
-    [string]$InputVersion
+        [Parameter(Mandatory = $true)]
+        [string]$InputVersion
     )
-    
+
     $cleanVersion = $InputVersion.Trim()
-    
+
     if ([string]::IsNullOrWhiteSpace($cleanVersion)) {
         throw "Version cannot be empty."
     }
-    
+
     $cleanVersion = $cleanVersion -replace "^[vV]", ""
-    
+
     if ($cleanVersion -notmatch "^\d+\.\d+\.\d+([.-][A-Za-z0-9.-]+)?$") {
         throw @"
 Invalid version: $InputVersion
-        
+
 Use a version like:
-        
+
     1.0.2
-        
+
 or:
-        
+
     v1.0.2
 "@
     }
-    
+
     return $cleanVersion
 }
 
 function Test-GitHasChanges {
     $status = & git status --porcelain
-    
+
     if ($LASTEXITCODE -ne 0) {
         throw "Could not read git status."
     }
-    
+
     return -not [string]::IsNullOrWhiteSpace(($status | Out-String).Trim())
 }
 
 function Test-GitTagExistsLocal {
     param(
-    [Parameter(Mandatory = $true)]
-    [string]$Tag
+        [Parameter(Mandatory = $true)]
+        [string]$Tag
     )
-    
-    & git rev-parse -q --verify "refs/tags/$Tag" *> $null
-    return $LASTEXITCODE -eq 0
+
+    $oldErrorActionPreference = $ErrorActionPreference
+
+    try {
+        $ErrorActionPreference = "Continue"
+        & git rev-parse -q --verify "refs/tags/$Tag" *> $null
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $oldErrorActionPreference
+    }
+
+    return $exitCode -eq 0
 }
 
 function Test-GitTagExistsRemote {
     param(
-    [Parameter(Mandatory = $true)]
-    [string]$Tag
+        [Parameter(Mandatory = $true)]
+        [string]$Tag
     )
-    
+
     $remoteTag = & git ls-remote --tags origin "refs/tags/$Tag"
-    
+
     if ($LASTEXITCODE -ne 0) {
         throw "Could not check remote tag: $Tag"
     }
-    
+
     return -not [string]::IsNullOrWhiteSpace(($remoteTag | Out-String).Trim())
 }
 
 function Assert-GitHubCliReady {
     Assert-Command `
-    -Name "gh" `
-    -InstallHint "Install GitHub CLI with: winget install -e --id GitHub.cli"
-    
-    & gh auth status *> $null
-    
-    if ($LASTEXITCODE -ne 0) {
+        -Name "gh" `
+        -InstallHint "Install GitHub CLI with: winget install -e --id GitHub.cli"
+
+    $oldErrorActionPreference = $ErrorActionPreference
+
+    try {
+        $ErrorActionPreference = "Continue"
+        & gh auth status *> $null
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        $ErrorActionPreference = $oldErrorActionPreference
+    }
+
+    if ($exitCode -ne 0) {
         throw @"
 GitHub CLI is installed, but you are not logged in.
-        
+
 Run:
-        
+
     gh auth login
-        
+
 Then run this release script again.
 "@
     }
+}
+
+function Test-GitHubReleaseExists {
+    param(
+        [Parameter(Mandatory = $true)]
+        [string]$Tag
+    )
+
+    $releaseViewOutputFile = New-TemporaryFile
+    $releaseViewErrorFile = New-TemporaryFile
+
+    $releaseViewExitCode = $null
+    $releaseViewOutputText = ""
+    $releaseViewErrorText = ""
+
+    try {
+        $releaseViewProcess = Start-Process `
+            -FilePath "gh" `
+            -ArgumentList @("release", "view", $Tag, "--json", "tagName") `
+            -NoNewWindow `
+            -Wait `
+            -PassThru `
+            -RedirectStandardOutput $releaseViewOutputFile.FullName `
+            -RedirectStandardError $releaseViewErrorFile.FullName
+
+        $releaseViewExitCode = $releaseViewProcess.ExitCode
+
+        $releaseViewOutputText = Get-Content `
+            -LiteralPath $releaseViewOutputFile.FullName `
+            -Raw `
+            -ErrorAction SilentlyContinue
+
+        $releaseViewErrorText = Get-Content `
+            -LiteralPath $releaseViewErrorFile.FullName `
+            -Raw `
+            -ErrorAction SilentlyContinue
+    }
+    finally {
+        Remove-Item -LiteralPath $releaseViewOutputFile.FullName -Force -ErrorAction SilentlyContinue
+        Remove-Item -LiteralPath $releaseViewErrorFile.FullName -Force -ErrorAction SilentlyContinue
+    }
+
+    if ($releaseViewExitCode -eq 0) {
+        return $true
+    }
+
+    $combinedText = "$releaseViewOutputText`n$releaseViewErrorText"
+
+    if ($releaseViewExitCode -eq 1 -and $combinedText -match "release not found|not found|HTTP 404") {
+        return $false
+    }
+
+    throw @"
+Could not check GitHub release: $Tag
+
+gh exit code:
+$releaseViewExitCode
+
+gh output:
+$releaseViewOutputText
+
+gh error:
+$releaseViewErrorText
+"@
 }
 
 Push-Location $Root
@@ -213,18 +296,18 @@ try {
     if (-not (Test-Path $BuildInstallerScript)) {
         throw "Could not find build-installer.ps1 in repo root: $BuildInstallerScript"
     }
-    
+
     Assert-Command `
-    -Name "git" `
-    -InstallHint "Install Git for Windows, then reopen PowerShell."
-    
+        -Name "git" `
+        -InstallHint "Install Git for Windows, then reopen PowerShell."
+
     Assert-GitHubCliReady
-    
+
     $CleanVersion = Normalize-ReleaseVersion -InputVersion $Version
     $Tag = "v$CleanVersion"
     $InstallerPath = Join-Path $Root "dist\installer\TacticalRadioSetup-$CleanVersion.exe"
     $WrongInstallerPath = Join-Path $Root "dist\installer\TacticalRadioSetup--Configuration.exe"
-    
+
     Write-Host ""
     Write-Host "== Tactical Radio release publish =="
     Write-Host "Root:          $Root"
@@ -233,64 +316,64 @@ try {
     Write-Host "Configuration: $Configuration"
     Write-Host "Installer:     $InstallerPath"
     Write-Host ""
-    
+
     if (Test-Path $WrongInstallerPath) {
         Write-Host "Removing old incorrectly named installer:"
         Write-Host "  $WrongInstallerPath"
         Remove-Item -LiteralPath $WrongInstallerPath -Force -ErrorAction SilentlyContinue
     }
-    
+
     if (-not $SkipBuild) {
         Write-Host ""
         Write-Host "== Building installer =="
-        
+
         $buildParams = @{
             Configuration = $Configuration
             Version = $CleanVersion
         }
-        
+
         if ($Sign) {
             $buildParams["Sign"] = $true
         }
-        
+
         if ($CertificatePath) {
             $buildParams["CertificatePath"] = $CertificatePath
         }
-        
+
         if ($CertificatePassword) {
             $buildParams["CertificatePassword"] = $CertificatePassword
         }
-        
+
         if ($CertificateThumbprint) {
             $buildParams["CertificateThumbprint"] = $CertificateThumbprint
         }
-        
+
         if ($UseMachineStore) {
             $buildParams["UseMachineStore"] = $true
         }
-        
+
         if ($SignToolPath) {
             $buildParams["SignToolPath"] = $SignToolPath
         }
-        
+
         if ($TimestampUrl) {
             $buildParams["TimestampUrl"] = $TimestampUrl
         }
-        
+
         Invoke-PowerShellScriptChecked `
-        -ScriptPath $BuildInstallerScript `
-        -Parameters $buildParams
+            -ScriptPath $BuildInstallerScript `
+            -Parameters $buildParams
     }
     else {
         Write-Host "Skipping installer build."
     }
-    
+
     if (-not (Test-Path $InstallerPath)) {
         $availableInstallers = @(
-        Get-ChildItem -LiteralPath (Join-Path $Root "dist\installer") -Filter "TacticalRadioSetup-*.exe" -ErrorAction SilentlyContinue |
-        Sort-Object LastWriteTime -Descending
+            Get-ChildItem -LiteralPath (Join-Path $Root "dist\installer") -Filter "TacticalRadioSetup-*.exe" -ErrorAction SilentlyContinue |
+                Sort-Object LastWriteTime -Descending
         )
-        
+
         if ($availableInstallers.Count -gt 0) {
             Write-Host ""
             Write-Host "Installers currently in dist\installer:"
@@ -298,18 +381,18 @@ try {
                 Write-Host "  $($installer.Name)"
             }
         }
-        
+
         throw "Installer was not found: $InstallerPath"
     }
-    
+
     Write-Host ""
     Write-Host "== Installer ready =="
     Write-Host $InstallerPath
-    
+
     if (-not $SkipCommit) {
         Write-Host ""
         Write-Host "== Committing source changes =="
-        
+
         if (Test-GitHasChanges) {
             Invoke-ExternalChecked -FilePath "git" -Arguments @("add", "-A")
             Invoke-ExternalChecked -FilePath "git" -Arguments @("commit", "-m", "Release $Tag")
@@ -321,42 +404,42 @@ try {
     else {
         Write-Host "Skipping git commit."
     }
-    
+
     if (-not $SkipPush) {
         Write-Host ""
         Write-Host "== Pushing current branch =="
-        
+
         Invoke-ExternalChecked -FilePath "git" -Arguments @("push")
     }
     else {
         Write-Host "Skipping branch push."
     }
-    
+
     if (-not $SkipTag) {
         Write-Host ""
         Write-Host "== Creating git tag =="
-        
+
         if (Test-GitTagExistsLocal -Tag $Tag) {
             throw "Local tag already exists: $Tag"
         }
-        
+
         if (Test-GitTagExistsRemote -Tag $Tag) {
             throw "Remote tag already exists on origin: $Tag"
         }
-        
+
         Invoke-ExternalChecked -FilePath "git" -Arguments @(
-        "tag",
-        "-a",
-        $Tag,
-        "-m",
-        "Tactical Radio $Tag"
+            "tag",
+            "-a",
+            $Tag,
+            "-m",
+            "Tactical Radio $Tag"
         )
-        
+
         if (-not $SkipPush) {
             Invoke-ExternalChecked -FilePath "git" -Arguments @(
-            "push",
-            "origin",
-            $Tag
+                "push",
+                "origin",
+                $Tag
             )
         }
         else {
@@ -366,79 +449,49 @@ try {
     else {
         Write-Host "Skipping tag creation."
     }
-    
+
     if (-not $SkipRelease) {
         Write-Host ""
         Write-Host "== Creating GitHub release =="
-        
-        $releaseExists = $false
-        $ghReleaseViewOutput = $null
-        $ghReleaseViewExitCode = 0
-        
-        $oldErrorActionPreference = $ErrorActionPreference
-        
-        try {
-            $ErrorActionPreference = "Continue"
-            $ghReleaseViewOutput = & gh release view $Tag --json tagName 2>&1
-            $ghReleaseViewExitCode = $LASTEXITCODE
-        }
-        finally {
-            $ErrorActionPreference = $oldErrorActionPreference
-        }
-        
-        if ($ghReleaseViewExitCode -eq 0) {
-            $releaseExists = $true
-        }
-        else {
-            $ghReleaseViewText = ($ghReleaseViewOutput | Out-String).Trim()
-            
-            if ($ghReleaseViewText -notmatch "release not found|not found") {
-                throw @"
-                Could not check GitHub release: $Tag
-                                
-                gh exit code:
-                $ghReleaseViewExitCode
-                                
-                gh output:
-                $ghReleaseViewText
-                "@
-            }
-        }
-        
+
+        $releaseExists = Test-GitHubReleaseExists -Tag $Tag
+
         if ($releaseExists) {
             if (-not $ReplaceExistingAsset) {
                 throw @"
 GitHub release already exists: $Tag
-                
+
 Use -ReplaceExistingAsset to upload the installer again with --clobber.
 "@
             }
-            
+
             Write-Host "Release already exists. Replacing installer asset..."
-            
+
             Invoke-ExternalChecked -FilePath "gh" -Arguments @(
-            "release",
-            "upload",
-            $Tag,
-            $InstallerPath,
-            "--clobber"
+                "release",
+                "upload",
+                $Tag,
+                $InstallerPath,
+                "--clobber"
             )
         }
         else {
+            Write-Host "Release does not exist. Creating it..."
+
             $releaseArgs = @(
-            "release",
-            "create",
-            $Tag,
-            $InstallerPath,
-            "--title",
-            "Tactical Radio $Tag"
+                "release",
+                "create",
+                $Tag,
+                $InstallerPath,
+                "--title",
+                "Tactical Radio $Tag"
             )
-            
+
             if ($ReleaseNotesFile) {
                 if (-not (Test-Path $ReleaseNotesFile)) {
                     throw "Release notes file does not exist: $ReleaseNotesFile"
                 }
-                
+
                 $releaseArgs += @("--notes-file", $ReleaseNotesFile)
             }
             elseif ($ReleaseNotes) {
@@ -447,22 +500,22 @@ Use -ReplaceExistingAsset to upload the installer again with --clobber.
             else {
                 $releaseArgs += @("--notes", "Release $Tag")
             }
-            
+
             if ($Draft) {
                 $releaseArgs += "--draft"
             }
-            
+
             if ($Prerelease) {
                 $releaseArgs += "--prerelease"
             }
-            
+
             Invoke-ExternalChecked -FilePath "gh" -Arguments $releaseArgs
         }
     }
     else {
         Write-Host "Skipping GitHub release creation."
     }
-    
+
     Write-Host ""
     Write-Host "DONE"
     Write-Host "Release tag:"

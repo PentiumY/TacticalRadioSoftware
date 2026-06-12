@@ -4,7 +4,10 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
     Title="Tactical Radio">
 
-    <Grid x:Name="RootGrid" Background="#F6F8FB">
+    <Grid
+        x:Name="RootGrid"
+        Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
+
         <VisualStateManager.VisualStateGroups>
             <VisualStateGroup x:Name="ResponsiveStates">
 
@@ -82,8 +85,8 @@
 
         <Border
             Grid.Row="0"
-            Background="White"
-            BorderBrush="#E3E8EF"
+            Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}"
+            BorderBrush="{ThemeResource SystemControlForegroundBaseLowBrush}"
             BorderThickness="0,0,0,1">
 
             <Grid Padding="24,22,24,22">
@@ -97,7 +100,7 @@
                     Grid.Column="0"
                     Width="56"
                     Height="56"
-                    Background="#F1F5F9"
+                    Background="{ThemeResource SystemControlBackgroundChromeMediumBrush}"
                     CornerRadius="14"
                     HorizontalAlignment="Left"
                     VerticalAlignment="Center">
@@ -117,7 +120,7 @@
                             VerticalAlignment="Center"
                             FontSize="20"
                             FontWeight="SemiBold"
-                            Foreground="#1E293B"
+                            Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"
                             Text="TR" />
                     </Grid>
                 </Border>
@@ -130,13 +133,13 @@
                     <TextBlock
                         FontSize="26"
                         FontWeight="SemiBold"
-                        Foreground="#111827"
+                        Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"
                         Text="Tactical Radio"
                         TextWrapping="Wrap" />
 
                     <TextBlock
                         FontSize="14"
-                        Foreground="#64748B"
+                        Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
                         Text="Configure the bridge connection, install the Mumble plugin, and launch Mumble."
                         TextWrapping="Wrap" />
                 </StackPanel>
@@ -160,8 +163,8 @@
 
                         <Border
                             x:Name="UpdateCard"
-                            Background="White"
-                            BorderBrush="#E3E8EF"
+                            Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}"
+                            BorderBrush="{ThemeResource SystemControlForegroundBaseLowBrush}"
                             BorderThickness="1"
                             CornerRadius="14"
                             Padding="20,18,20,20">
@@ -176,20 +179,20 @@
                                     <TextBlock
                                         FontSize="18"
                                         FontWeight="SemiBold"
-                                        Foreground="#111827"
+                                        Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"
                                         Text="Software update" />
 
                                     <TextBlock
                                         x:Name="UpdateStatusTitleText"
                                         FontSize="14"
                                         FontWeight="SemiBold"
-                                        Foreground="#334155"
+                                        Foreground="{ThemeResource SystemControlForegroundBaseMediumHighBrush}"
                                         Text="Checking for updates..." />
 
                                     <TextBlock
                                         x:Name="UpdateStatusMessageText"
                                         FontSize="12"
-                                        Foreground="#64748B"
+                                        Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
                                         Text="Using GitHub Releases as the source of truth."
                                         TextWrapping="WrapWholeWords" />
                                 </StackPanel>
@@ -226,8 +229,8 @@
                         </Border>
 
                         <Border
-                            Background="White"
-                            BorderBrush="#E3E8EF"
+                            Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}"
+                            BorderBrush="{ThemeResource SystemControlForegroundBaseLowBrush}"
                             BorderThickness="1"
                             CornerRadius="14"
                             Padding="20,18,20,20">
@@ -236,12 +239,12 @@
                                 <TextBlock
                                     FontSize="18"
                                     FontWeight="SemiBold"
-                                    Foreground="#111827"
+                                    Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"
                                     Text="Bridge settings" />
 
                                 <StackPanel Spacing="4">
                                     <TextBlock
-                                        Foreground="#334155"
+                                        Foreground="{ThemeResource SystemControlForegroundBaseMediumHighBrush}"
                                         Text="Base URL" />
 
                                     <TextBox
@@ -254,7 +257,7 @@
                                     <TextBlock
                                         Margin="0,2,0,4"
                                         FontSize="12"
-                                        Foreground="#64748B"
+                                        Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
                                         Text="Optional. Leave empty to avoid shipping a default server address."
                                         TextWrapping="WrapWholeWords" />
                                 </StackPanel>
@@ -281,7 +284,7 @@
                                         Spacing="4">
 
                                         <TextBlock
-                                            Foreground="#334155"
+                                            Foreground="{ThemeResource SystemControlForegroundBaseMediumHighBrush}"
                                             Text="Place ID" />
 
                                         <TextBox
@@ -298,7 +301,7 @@
                                         Spacing="4">
 
                                         <TextBlock
-                                            Foreground="#334155"
+                                            Foreground="{ThemeResource SystemControlForegroundBaseMediumHighBrush}"
                                             Text="Job ID" />
 
                                         <TextBox
@@ -311,15 +314,15 @@
 
                                 <TextBlock
                                     FontSize="12"
-                                    Foreground="#64748B"
+                                    Foreground="{ThemeResource SystemControlForegroundBaseMediumBrush}"
                                     Text="These values are passed to Mumble as TRADIO_PLACE_ID and TRADIO_JOB_ID."
                                     TextWrapping="WrapWholeWords" />
                             </StackPanel>
                         </Border>
 
                         <Border
-                            Background="White"
-                            BorderBrush="#E3E8EF"
+                            Background="{ThemeResource SystemControlBackgroundChromeMediumLowBrush}"
+                            BorderBrush="{ThemeResource SystemControlForegroundBaseLowBrush}"
                             BorderThickness="1"
                             CornerRadius="14"
                             Padding="20,18,20,20">
@@ -328,12 +331,12 @@
                                 <TextBlock
                                     FontSize="18"
                                     FontWeight="SemiBold"
-                                    Foreground="#111827"
+                                    Foreground="{ThemeResource SystemControlForegroundBaseHighBrush}"
                                     Text="Mumble" />
 
                                 <StackPanel Spacing="4">
                                     <TextBlock
-                                        Foreground="#334155"
+                                        Foreground="{ThemeResource SystemControlForegroundBaseMediumHighBrush}"
                                         Text="Mumble path" />
 
                                     <Grid
@@ -430,7 +433,7 @@
 
         <Border
             Grid.Row="2"
-            Background="#F6F8FB"
+            Background="{ThemeResource ApplicationPageBackgroundThemeBrush}"
             Padding="24,0,24,20">
 
             <InfoBar
