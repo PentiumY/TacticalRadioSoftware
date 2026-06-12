@@ -23,7 +23,9 @@ OutputBaseFilename=TacticalRadioSetup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
+SetupIconFile={#SourceDir}\app\TacticalRadio.ico
 UninstallDisplayName=Tactical Radio
+UninstallDisplayIcon={app}\TacticalRadio.ico
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
@@ -44,13 +46,13 @@ Source: "{#SourceDir}\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion recurse
 Source: "{#SourceDir}\plugin\{#PluginFileName}"; DestDir: "{userappdata}\Mumble\Mumble\Plugins"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Tactical Radio Launcher"; Filename: "{app}\TacticalRadioLauncher.cmd"; WorkingDir: "{app}"
-Name: "{autodesktop}\Tactical Radio Launcher"; Filename: "{app}\TacticalRadioLauncher.cmd"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\Tactical Radio Launcher"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\TacticalRadioLauncher.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\TacticalRadio.ico"; Comment: "Launch Tactical Radio"
+Name: "{autodesktop}\Tactical Radio Launcher"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\TacticalRadioLauncher.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\TacticalRadio.ico"; Comment: "Launch Tactical Radio"; Tasks: desktopicon
 
 [Run]
-Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-ChildItem -LiteralPath '{app}' -Recurse -File | Unblock-File -ErrorAction SilentlyContinue; Get-ChildItem -LiteralPath '{userappdata}\Mumble\Mumble\Plugins' -Filter '*.dll' | Unblock-File -ErrorAction SilentlyContinue"""; Flags: runhidden
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-ChildItem -LiteralPath '{app}' -Recurse -File | Unblock-File -ErrorAction SilentlyContinue; Get-ChildItem -LiteralPath '{userappdata}\Mumble\Mumble\Plugins' -Filter '*.dll' | Unblock-File -ErrorAction SilentlyContinue"""; Flags: runhidden
 
-Filename: "{app}\TacticalRadioLauncher.cmd"; Description: "Launch Tactical Radio"; Flags: nowait postinstall skipifsilent
+Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\TacticalRadioLauncher.ps1"""; Description: "Launch Tactical Radio"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 Type: files; Name: "{userappdata}\Mumble\Mumble\Plugins\{#PluginFileName}"

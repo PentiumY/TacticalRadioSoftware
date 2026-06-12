@@ -10,6 +10,33 @@ const txLocks = new TxLockStore();
 
 await app.register(websocket);
 
+type RadioEar = "left" | "right" | "both";
+
+type PlayerRadioState = {
+  id: number | string;
+  channel: string;
+  listening: boolean;
+  transmitting: boolean;
+  ear: RadioEar;
+  volume: number;
+  minDistance: number;
+  maxDistance: number;
+};
+
+type StoredPlayerWithRadios = {
+  robloxUserId: number;
+  username?: string;
+  displayName?: string;
+  position: { x: number; y: number; z: number };
+  lookVector: { x: number; y: number; z: number };
+  frequency: string;
+  isPtt: boolean;
+  team?: string;
+  squad?: string;
+  radioId?: string;
+  radios?: PlayerRadioState[];
+};
+
 function numberOrZero(value: string | undefined): number {
   if (!value) {
     return 0;
@@ -17,6 +44,21 @@ function numberOrZero(value: string | undefined): number {
 
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function defaultRadiosForPlayer(player: StoredPlayerWithRadios): PlayerRadioState[] {
+  return [
+    {
+      id: player.radioId ?? "primary",
+      channel: player.frequency,
+      listening: true,
+      transmitting: player.isPtt,
+      ear: "both",
+      volume: 1.0,
+      minDistance: 0,
+      maxDistance: 3000
+    }
+  ];
 }
 
 app.get("/health", async () => {
@@ -41,6 +83,7 @@ app.post<{
       team?: string;
       squad?: string;
       radioId?: string;
+      radios?: PlayerRadioState[];
     }>;
   };
 }>("/v1/roblox/state", async (request) => {
@@ -129,6 +172,46 @@ app.get<{
     localRobloxUsername,
     players: playerStates.listForServer(placeId, jobId),
     txLocks: txLocks.listForServer(placeId, jobId)
+  };
+});
+
+app.get<{
+  Querystring: {
+    placeId: string;
+    jobId: string;
+  };
+}>("/v1/plugin/stereo", async (request) => {
+  const placeId = Number(request.query.placeId);
+  const jobId = request.query.jobId;
+
+  const players = playerStates.listForServer(placeId, jobId) as StoredPlayerWithRadios[];
+
+  return {
+    nowMs: Date.now(),
+    placeId,
+    jobId,
+    players: players.map((player) => {
+      const radios = player.radios ?? defaultRadiosForPlayer(player);
+
+      return {
+        robloxUserId: player.robloxUserId,
+        username: player.username,
+        displayName: player.displayName,
+        team: player.team,
+        squad: player.squad,
+        radios: radios.map((radio) => ({
+          id: radio.id,
+          channel: radio.channel,
+          listening: radio.listening,
+          transmitting: radio.transmitting,
+          ear: radio.ear,
+          stereoEnabled: radio.ear === "left" || radio.ear === "right",
+          volume: radio.volume,
+          minDistance: radio.minDistance,
+          maxDistance: radio.maxDistance
+        }))
+      };
+    })
   };
 });
 
