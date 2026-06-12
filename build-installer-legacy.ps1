@@ -27,9 +27,6 @@ $StagePlugin = Join-Path $Stage "plugin"
 $InstallerOut = Join-Path $Dist "installer"
 $GeneratedInstallerDir = Join-Path $Root "installer"
 $GeneratedIss = Join-Path $GeneratedInstallerDir "TacticalRadio.generated.iss"
-$AssetsDir = Join-Path $Root "assets"
-$AssetIcon = Join-Path $AssetsDir "TacticalRadio.ico"
-$AssetLogoPng = Join-Path $AssetsDir "TacticalRadioLogo.png"
 
 function Invoke-Checked {
     param(
@@ -280,33 +277,8 @@ foreach ($dll in $releaseDlls) {
     }
 }
 
-$RequiredAssets = @(
-    [pscustomobject]@{
-        Name = "Windows icon"
-        Source = $AssetIcon
-        Destination = Join-Path $StageApp "TacticalRadio.ico"
-        Hint = "Create assets\TacticalRadio.ico as a multi-size .ico containing at least 16, 24, 32, 48, 64, 128, and 256 px images."
-    },
-    [pscustomobject]@{
-        Name = "Launcher logo"
-        Source = $AssetLogoPng
-        Destination = Join-Path $StageApp "TacticalRadioLogo.png"
-        Hint = "Create assets\TacticalRadioLogo.png as a high-resolution PNG, ideally 1024x1024."
-    }
-)
-
-foreach ($asset in $RequiredAssets) {
-    if (-not (Test-Path $asset.Source)) {
-        throw "Missing $($asset.Name): $($asset.Source). $($asset.Hint)"
-    }
-
-    Copy-Item $asset.Source $asset.Destination -Force
-    Write-Host "$($asset.Name): $($asset.Source)"
-}
-
-
 $config = [ordered]@{
-    baseUrl = ""
+    baseUrl = "http://83.254.129.17:3000"
     placeId = "16489784096"
     jobId = "studio-local"
     mumblePath = "C:\Program Files\Mumble\Client\mumble.exe"
@@ -320,72 +292,8 @@ Add-Type -AssemblyName System.Drawing
 
 $ErrorActionPreference = "Stop"
 
-function Enable-HighDpiSupport {
-    try {
-        try {
-            [System.Windows.Forms.Application]::SetHighDpiMode([System.Windows.Forms.HighDpiMode]::PerMonitorV2) | Out-Null
-            return
-        }
-        catch {
-        }
-
-        Add-Type -TypeDefinition @"
-using System;
-using System.Runtime.InteropServices;
-
-public static class TacticalRadioDpiNative
-{
-    [DllImport("user32.dll")]
-    public static extern bool SetProcessDpiAwarenessContext(IntPtr dpiContext);
-
-    [DllImport("shcore.dll")]
-    public static extern int SetProcessDpiAwareness(int awareness);
-
-    [DllImport("user32.dll")]
-    public static extern bool SetProcessDPIAware();
-}
-"@ -ErrorAction SilentlyContinue
-
-        $dpiWasSet = $false
-
-        try {
-            # DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 = -4
-            $dpiWasSet = [TacticalRadioDpiNative]::SetProcessDpiAwarenessContext([IntPtr](-4))
-        }
-        catch {
-        }
-
-        if (-not $dpiWasSet) {
-            try {
-                # PROCESS_PER_MONITOR_DPI_AWARE = 2
-                [TacticalRadioDpiNative]::SetProcessDpiAwareness(2) | Out-Null
-                $dpiWasSet = $true
-            }
-            catch {
-            }
-        }
-
-        if (-not $dpiWasSet) {
-            try {
-                [TacticalRadioDpiNative]::SetProcessDPIAware() | Out-Null
-            }
-            catch {
-            }
-        }
-    }
-    catch {
-    }
-}
-
-Enable-HighDpiSupport
-
-[System.Windows.Forms.Application]::EnableVisualStyles()
-[System.Windows.Forms.Application]::SetCompatibleTextRenderingDefault($false)
-
 $AppDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 $ConfigPath = Join-Path $AppDir "config.json"
-$AppIconPath = Join-Path $AppDir "TacticalRadio.ico"
-$AppLogoPath = Join-Path $AppDir "TacticalRadioLogo.png"
 $PluginSourceDir = Join-Path $AppDir "plugin"
 $PluginDestDir = Join-Path $env:APPDATA "Mumble\Mumble\Plugins"
 
@@ -406,7 +314,7 @@ function Get-DefaultMumblePath {
 
 function Get-Config {
     $default = [ordered]@{
-        baseUrl = ""
+        baseUrl = "http://83.254.129.17:3000"
         placeId = "16489784096"
         jobId = "studio-local"
         mumblePath = Get-DefaultMumblePath
@@ -430,14 +338,8 @@ function Get-Config {
 }
 
 function Save-Config {
-    $baseUrl = $BaseUrlText.Text.Trim()
-
-    if ($baseUrl -and $baseUrl -notmatch "^https?://") {
-        throw "Base URL must start with http:// or https://, or be left empty."
-    }
-
     $obj = [ordered]@{
-        baseUrl = $baseUrl
+        baseUrl = $BaseUrlText.Text.Trim()
         placeId = $PlaceIdText.Text.Trim()
         jobId = $JobIdText.Text.Trim()
         mumblePath = $MumblePathText.Text.Trim()
@@ -512,215 +414,64 @@ function Show-Error {
     ) | Out-Null
 }
 
+$config = Get-Config
+
+[System.Windows.Forms.Application]::EnableVisualStyles()
+
+$form = New-Object System.Windows.Forms.Form
+$form.Text = "Tactical Radio Launcher"
+$form.Size = New-Object System.Drawing.Size(660, 360)
+$form.StartPosition = "CenterScreen"
+$form.FormBorderStyle = "FixedDialog"
+$form.MaximizeBox = $false
+
 function Add-Label {
     param(
-        [System.Windows.Forms.Control]$Parent,
         [string]$Text,
         [int]$X,
-        [int]$Y,
-        [int]$Width = 130
+        [int]$Y
     )
 
     $label = New-Object System.Windows.Forms.Label
     $label.Text = $Text
     $label.Location = New-Object System.Drawing.Point($X, $Y)
-    $label.Size = New-Object System.Drawing.Size($Width, 25)
-    $label.Font = $DefaultFont
-    $label.ForeColor = [System.Drawing.Color]::FromArgb(38, 48, 61)
-    $label.UseCompatibleTextRendering = $false
-    $Parent.Controls.Add($label)
-    return $label
-}
-
-function Add-HelpText {
-    param(
-        [System.Windows.Forms.Control]$Parent,
-        [string]$Text,
-        [int]$X,
-        [int]$Y,
-        [int]$Width = 520
-    )
-
-    $label = New-Object System.Windows.Forms.Label
-    $label.Text = $Text
-    $label.Location = New-Object System.Drawing.Point($X, $Y)
-    $label.Size = New-Object System.Drawing.Size($Width, 23)
-    $label.Font = $SmallFont
-    $label.ForeColor = [System.Drawing.Color]::FromArgb(105, 117, 130)
-    $label.UseCompatibleTextRendering = $false
-    $Parent.Controls.Add($label)
+    $label.Size = New-Object System.Drawing.Size(120, 24)
+    $form.Controls.Add($label)
     return $label
 }
 
 function Add-TextBox {
     param(
-        [System.Windows.Forms.Control]$Parent,
         [string]$Text,
         [int]$X,
         [int]$Y,
-        [int]$Width = 520
+        [int]$Width = 440
     )
 
     $textBox = New-Object System.Windows.Forms.TextBox
     $textBox.Text = $Text
     $textBox.Location = New-Object System.Drawing.Point($X, $Y)
-    $textBox.Size = New-Object System.Drawing.Size($Width, 28)
-    $textBox.Font = $DefaultFont
-    $textBox.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left -bor [System.Windows.Forms.AnchorStyles]::Right
-    $Parent.Controls.Add($textBox)
+    $textBox.Size = New-Object System.Drawing.Size($Width, 24)
+    $form.Controls.Add($textBox)
     return $textBox
 }
 
-function New-ActionButton {
-    param(
-        [string]$Text,
-        [int]$X,
-        [int]$Y,
-        [int]$Width,
-        [System.Drawing.Color]$BackColor,
-        [System.Drawing.Color]$ForeColor
-    )
+Add-Label "Base URL:" 20 24 | Out-Null
+$BaseUrlText = Add-TextBox $config.baseUrl 150 20
 
-    $button = New-Object System.Windows.Forms.Button
-    $button.Text = $Text
-    $button.Location = New-Object System.Drawing.Point($X, $Y)
-    $button.Size = New-Object System.Drawing.Size($Width, 40)
-    $button.Font = $ButtonFont
-    $button.BackColor = $BackColor
-    $button.ForeColor = $ForeColor
-    $button.FlatStyle = [System.Windows.Forms.FlatStyle]::Flat
-    $button.FlatAppearance.BorderSize = 0
-    $button.UseVisualStyleBackColor = $false
-    $button.UseCompatibleTextRendering = $false
-    return $button
-}
+Add-Label "Place ID:" 20 64 | Out-Null
+$PlaceIdText = Add-TextBox $config.placeId 150 60
 
-$config = Get-Config
+Add-Label "Job ID:" 20 104 | Out-Null
+$JobIdText = Add-TextBox $config.jobId 150 100
 
-$DefaultFont = New-Object System.Drawing.Font("Segoe UI", 9.5, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point)
-$SmallFont = New-Object System.Drawing.Font("Segoe UI", 8.5, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point)
-$TitleFont = New-Object System.Drawing.Font("Segoe UI Semibold", 19, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point)
-$SubtitleFont = New-Object System.Drawing.Font("Segoe UI", 10, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point)
-$ButtonFont = New-Object System.Drawing.Font("Segoe UI Semibold", 9.5, [System.Drawing.FontStyle]::Regular, [System.Drawing.GraphicsUnit]::Point)
+Add-Label "Mumble path:" 20 144 | Out-Null
+$MumblePathText = Add-TextBox $config.mumblePath 150 140 360
 
-$DarkColor = [System.Drawing.Color]::FromArgb(21, 32, 48)
-$AccentColor = [System.Drawing.Color]::FromArgb(40, 119, 219)
-$SurfaceColor = [System.Drawing.Color]::FromArgb(246, 248, 251)
-$BorderColor = [System.Drawing.Color]::FromArgb(218, 225, 233)
-$TextColor = [System.Drawing.Color]::FromArgb(34, 46, 60)
-$MutedTextColor = [System.Drawing.Color]::FromArgb(77, 89, 103)
-
-$AppIcon = $null
-if (Test-Path $AppIconPath) {
-    try {
-        $AppIcon = New-Object System.Drawing.Icon($AppIconPath)
-    }
-    catch {
-        $AppIcon = $null
-    }
-}
-
-$LogoImage = $null
-if (Test-Path $AppLogoPath) {
-    try {
-        $LogoImage = [System.Drawing.Image]::FromFile($AppLogoPath)
-    }
-    catch {
-        $LogoImage = $null
-    }
-}
-
-$form = New-Object System.Windows.Forms.Form
-$form.Text = "Tactical Radio"
-$form.AutoScaleDimensions = New-Object System.Drawing.SizeF(96.0, 96.0)
-$form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
-$form.ClientSize = New-Object System.Drawing.Size(780, 530)
-$form.MinimumSize = New-Object System.Drawing.Size(780, 530)
-$form.StartPosition = "CenterScreen"
-$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
-$form.MaximizeBox = $false
-$form.BackColor = $SurfaceColor
-$form.Font = $DefaultFont
-
-if ($AppIcon) {
-    $form.Icon = $AppIcon
-}
-
-$headerPanel = New-Object System.Windows.Forms.Panel
-$headerPanel.Dock = [System.Windows.Forms.DockStyle]::Top
-$headerPanel.Height = 104
-$headerPanel.BackColor = $DarkColor
-$form.Controls.Add($headerPanel)
-
-if ($LogoImage -or $AppIcon) {
-    $logoBox = New-Object System.Windows.Forms.PictureBox
-    $logoBox.Location = New-Object System.Drawing.Point(24, 22)
-    $logoBox.Size = New-Object System.Drawing.Size(60, 60)
-    $logoBox.SizeMode = [System.Windows.Forms.PictureBoxSizeMode]::Zoom
-    $logoBox.BackColor = $DarkColor
-
-    if ($LogoImage) {
-        $logoBox.Image = $LogoImage
-    }
-    elseif ($AppIcon) {
-        $logoBox.Image = $AppIcon.ToBitmap()
-    }
-
-    $headerPanel.Controls.Add($logoBox)
-}
-
-$titleLabel = New-Object System.Windows.Forms.Label
-$titleLabel.Text = "Tactical Radio"
-$titleLabel.Location = New-Object System.Drawing.Point(100, 19)
-$titleLabel.Size = New-Object System.Drawing.Size(630, 38)
-$titleLabel.Font = $TitleFont
-$titleLabel.ForeColor = [System.Drawing.Color]::White
-$titleLabel.UseCompatibleTextRendering = $false
-$headerPanel.Controls.Add($titleLabel)
-
-$subtitleLabel = New-Object System.Windows.Forms.Label
-$subtitleLabel.Text = "Configure the bridge connection, repair the Mumble plugin, then launch Mumble."
-$subtitleLabel.Location = New-Object System.Drawing.Point(103, 61)
-$subtitleLabel.Size = New-Object System.Drawing.Size(630, 26)
-$subtitleLabel.Font = $SubtitleFont
-$subtitleLabel.ForeColor = [System.Drawing.Color]::FromArgb(198, 214, 235)
-$subtitleLabel.UseCompatibleTextRendering = $false
-$headerPanel.Controls.Add($subtitleLabel)
-
-$connectionGroup = New-Object System.Windows.Forms.GroupBox
-$connectionGroup.Text = "Bridge settings"
-$connectionGroup.Location = New-Object System.Drawing.Point(20, 120)
-$connectionGroup.Size = New-Object System.Drawing.Size(740, 176)
-$connectionGroup.Font = $ButtonFont
-$connectionGroup.ForeColor = $TextColor
-$form.Controls.Add($connectionGroup)
-
-Add-Label $connectionGroup "Base URL:" 18 36 120 | Out-Null
-$BaseUrlText = Add-TextBox $connectionGroup $config.baseUrl 156 32 556
-Add-HelpText $connectionGroup "Optional. Leave empty to avoid shipping a default server address." 156 62 556 | Out-Null
-
-Add-Label $connectionGroup "Place ID:" 18 94 120 | Out-Null
-$PlaceIdText = Add-TextBox $connectionGroup $config.placeId 156 90 230
-$PlaceIdText.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
-
-Add-Label $connectionGroup "Job ID:" 412 94 80 | Out-Null
-$JobIdText = Add-TextBox $connectionGroup $config.jobId 492 90 220
-$JobIdText.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Left
-Add-HelpText $connectionGroup "These values are passed to Mumble as TRADIO_PLACE_ID and TRADIO_JOB_ID." 156 120 556 | Out-Null
-
-$mumbleGroup = New-Object System.Windows.Forms.GroupBox
-$mumbleGroup.Text = "Mumble"
-$mumbleGroup.Location = New-Object System.Drawing.Point(20, 310)
-$mumbleGroup.Size = New-Object System.Drawing.Size(740, 96)
-$mumbleGroup.Font = $ButtonFont
-$mumbleGroup.ForeColor = $TextColor
-$form.Controls.Add($mumbleGroup)
-
-Add-Label $mumbleGroup "Mumble path:" 18 39 120 | Out-Null
-$MumblePathText = Add-TextBox $mumbleGroup $config.mumblePath 156 35 456
-
-$BrowseButton = New-ActionButton "Browse" 626 31 86 ([System.Drawing.Color]::FromArgb(226, 232, 240)) ([System.Drawing.Color]::FromArgb(28, 38, 52))
-$BrowseButton.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
+$BrowseButton = New-Object System.Windows.Forms.Button
+$BrowseButton.Text = "Browse"
+$BrowseButton.Location = New-Object System.Drawing.Point(520, 138)
+$BrowseButton.Size = New-Object System.Drawing.Size(90, 28)
 $BrowseButton.Add_Click({
     $dialog = New-Object System.Windows.Forms.OpenFileDialog
     $dialog.Filter = "Mumble executable|mumble.exe|Executable files|*.exe|All files|*.*"
@@ -730,15 +481,12 @@ $BrowseButton.Add_Click({
         $MumblePathText.Text = $dialog.FileName
     }
 })
-$mumbleGroup.Controls.Add($BrowseButton)
+$form.Controls.Add($BrowseButton)
 
-$buttonPanel = New-Object System.Windows.Forms.Panel
-$buttonPanel.Location = New-Object System.Drawing.Point(20, 420)
-$buttonPanel.Size = New-Object System.Drawing.Size(740, 50)
-$buttonPanel.BackColor = $SurfaceColor
-$form.Controls.Add($buttonPanel)
-
-$SaveButton = New-ActionButton "Save Settings" 0 5 154 ([System.Drawing.Color]::FromArgb(226, 232, 240)) ([System.Drawing.Color]::FromArgb(28, 38, 52))
+$SaveButton = New-Object System.Windows.Forms.Button
+$SaveButton.Text = "Save Settings"
+$SaveButton.Location = New-Object System.Drawing.Point(150, 190)
+$SaveButton.Size = New-Object System.Drawing.Size(130, 36)
 $SaveButton.Add_Click({
     try {
         Save-Config
@@ -748,9 +496,12 @@ $SaveButton.Add_Click({
         Show-Error $_.Exception.Message
     }
 })
-$buttonPanel.Controls.Add($SaveButton)
+$form.Controls.Add($SaveButton)
 
-$RepairButton = New-ActionButton "Install / Repair Plugin" 168 5 190 ([System.Drawing.Color]::FromArgb(226, 232, 240)) ([System.Drawing.Color]::FromArgb(28, 38, 52))
+$RepairButton = New-Object System.Windows.Forms.Button
+$RepairButton.Text = "Install / Repair Plugin"
+$RepairButton.Location = New-Object System.Drawing.Point(290, 190)
+$RepairButton.Size = New-Object System.Drawing.Size(150, 36)
 $RepairButton.Add_Click({
     try {
         Save-Config
@@ -760,10 +511,12 @@ $RepairButton.Add_Click({
         Show-Error $_.Exception.Message
     }
 })
-$buttonPanel.Controls.Add($RepairButton)
+$form.Controls.Add($RepairButton)
 
-$LaunchButton = New-ActionButton "Launch Mumble" 550 5 190 $AccentColor ([System.Drawing.Color]::White)
-$LaunchButton.Anchor = [System.Windows.Forms.AnchorStyles]::Top -bor [System.Windows.Forms.AnchorStyles]::Right
+$LaunchButton = New-Object System.Windows.Forms.Button
+$LaunchButton.Text = "Launch Mumble"
+$LaunchButton.Location = New-Object System.Drawing.Point(450, 190)
+$LaunchButton.Size = New-Object System.Drawing.Size(160, 36)
 $LaunchButton.Add_Click({
     try {
         Launch-Mumble
@@ -772,49 +525,22 @@ $LaunchButton.Add_Click({
         Show-Error $_.Exception.Message
     }
 })
-$buttonPanel.Controls.Add($LaunchButton)
-
-$statusPanel = New-Object System.Windows.Forms.Panel
-$statusPanel.Location = New-Object System.Drawing.Point(20, 484)
-$statusPanel.Size = New-Object System.Drawing.Size(740, 32)
-$statusPanel.BackColor = [System.Drawing.Color]::White
-$statusPanel.BorderStyle = [System.Windows.Forms.BorderStyle]::FixedSingle
-$form.Controls.Add($statusPanel)
+$form.Controls.Add($LaunchButton)
 
 $StatusLabel = New-Object System.Windows.Forms.Label
-$StatusLabel.Text = "Ready. Base URL is empty by default."
-$StatusLabel.Location = New-Object System.Drawing.Point(10, 7)
-$StatusLabel.Size = New-Object System.Drawing.Size(715, 20)
-$StatusLabel.Font = $SmallFont
-$StatusLabel.ForeColor = $MutedTextColor
-$StatusLabel.UseCompatibleTextRendering = $false
-$statusPanel.Controls.Add($StatusLabel)
-
-$toolTip = New-Object System.Windows.Forms.ToolTip
-$toolTip.SetToolTip($BaseUrlText, "Leave empty unless you want the launcher to set TRADIO_BASE_URL automatically.")
-$toolTip.SetToolTip($PlaceIdText, "Roblox placeId passed to the plugin process.")
-$toolTip.SetToolTip($JobIdText, "Roblox jobId passed to the plugin process.")
-$toolTip.SetToolTip($MumblePathText, "Path to the local Mumble client executable.")
-
-$form.AcceptButton = $LaunchButton
-
-$form.Add_FormClosed({
-    if ($LogoImage) {
-        $LogoImage.Dispose()
-    }
-
-    if ($AppIcon) {
-        $AppIcon.Dispose()
-    }
-})
+$StatusLabel.Text = "Ready."
+$StatusLabel.Location = New-Object System.Drawing.Point(20, 260)
+$StatusLabel.Size = New-Object System.Drawing.Size(600, 40)
+$form.Controls.Add($StatusLabel)
 
 [System.Windows.Forms.Application]::Run($form)
 '@
+
 $launcherPs1 | Set-Content -Path (Join-Path $StageApp "TacticalRadioLauncher.ps1") -Encoding UTF8
 
 $launcherCmd = @'
 @echo off
-powershell -NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File "%~dp0TacticalRadioLauncher.ps1"
+powershell -NoProfile -ExecutionPolicy Bypass -File "%~dp0TacticalRadioLauncher.ps1"
 '@
 
 $launcherCmd | Set-Content -Path (Join-Path $StageApp "TacticalRadioLauncher.cmd") -Encoding ASCII
@@ -845,9 +571,7 @@ OutputBaseFilename=TacticalRadioSetup-{#AppVersion}
 Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
-SetupIconFile={#SourceDir}\app\TacticalRadio.ico
 UninstallDisplayName=Tactical Radio
-UninstallDisplayIcon={app}\TacticalRadio.ico
 
 [Tasks]
 Name: "desktopicon"; Description: "Create a desktop shortcut"; GroupDescription: "Shortcuts:"; Flags: unchecked
@@ -868,13 +592,13 @@ Source: "{#SourceDir}\bin\*"; DestDir: "{app}\bin"; Flags: ignoreversion recurse
 Source: "{#SourceDir}\plugin\{#PluginFileName}"; DestDir: "{userappdata}\Mumble\Mumble\Plugins"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Tactical Radio Launcher"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\TacticalRadioLauncher.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\TacticalRadio.ico"; Comment: "Launch Tactical Radio"
-Name: "{autodesktop}\Tactical Radio Launcher"; Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\TacticalRadioLauncher.ps1"""; WorkingDir: "{app}"; IconFilename: "{app}\TacticalRadio.ico"; Comment: "Launch Tactical Radio"; Tasks: desktopicon
+Name: "{autoprograms}\Tactical Radio Launcher"; Filename: "{app}\TacticalRadioLauncher.cmd"; WorkingDir: "{app}"
+Name: "{autodesktop}\Tactical Radio Launcher"; Filename: "{app}\TacticalRadioLauncher.cmd"; WorkingDir: "{app}"; Tasks: desktopicon
 
 [Run]
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-ChildItem -LiteralPath '{app}' -Recurse -File | Unblock-File -ErrorAction SilentlyContinue; Get-ChildItem -LiteralPath '{userappdata}\Mumble\Mumble\Plugins' -Filter '*.dll' | Unblock-File -ErrorAction SilentlyContinue"""; Flags: runhidden
+Filename: "powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Get-ChildItem -LiteralPath '{app}' -Recurse -File | Unblock-File -ErrorAction SilentlyContinue; Get-ChildItem -LiteralPath '{userappdata}\Mumble\Mumble\Plugins' -Filter '*.dll' | Unblock-File -ErrorAction SilentlyContinue"""; Flags: runhidden
 
-Filename: "{sys}\WindowsPowerShell\v1.0\powershell.exe"; Parameters: "-NoProfile -ExecutionPolicy Bypass -WindowStyle Hidden -File ""{app}\TacticalRadioLauncher.ps1"""; Description: "Launch Tactical Radio"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\TacticalRadioLauncher.cmd"; Description: "Launch Tactical Radio"; Flags: nowait postinstall skipifsilent
 
 [UninstallDelete]
 Type: files; Name: "{userappdata}\Mumble\Mumble\Plugins\{#PluginFileName}"
