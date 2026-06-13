@@ -24,8 +24,10 @@ namespace {
 
     constexpr bool ENABLE_DISTANCE_DEBUG = false;
 
-    constexpr float DEFAULT_PROXIMITY_FULL_VOLUME_DISTANCE = 8.0f;
-    constexpr float DEFAULT_PROXIMITY_MAX_DISTANCE = 90.0f;
+    // Plugin-owned proximity voice settings.
+    // Since Mumble positional audio is disabled, this controls normal speech range.
+    constexpr float PROXIMITY_FULL_VOLUME_DISTANCE = 8.0f;
+    constexpr float PROXIMITY_MAX_DISTANCE = 90.0f;
 
     float clampFloat(float value, float minValue, float maxValue)
     {
@@ -58,87 +60,24 @@ namespace {
         }
     }
 
-    float proximityGain(
-        float distance,
-        float fullVolumeDistance,
-        float maxDistance
-    )
+    float proximityGain(float distance)
     {
-        fullVolumeDistance = clampFloat(
-            fullVolumeDistance,
-            0.0f,
-            10000.0f
-        );
-
-        maxDistance = clampFloat(
-            maxDistance,
-            fullVolumeDistance + 1.0f,
-            10000.0f
-        );
-
-        if (distance <= fullVolumeDistance) {
+        if (distance <= PROXIMITY_FULL_VOLUME_DISTANCE) {
             return 1.0f;
         }
 
-        if (distance >= maxDistance) {
+        if (distance >= PROXIMITY_MAX_DISTANCE) {
             return 0.0f;
         }
 
         const float t =
-            (distance - fullVolumeDistance) /
-            (maxDistance - fullVolumeDistance);
+            (distance - PROXIMITY_FULL_VOLUME_DISTANCE) /
+            (PROXIMITY_MAX_DISTANCE - PROXIMITY_FULL_VOLUME_DISTANCE);
 
         const float linear = 1.0f - clampFloat(t, 0.0f, 1.0f);
 
         // Slightly steeper falloff than pure linear.
         return linear * linear;
-    }
-
-    const SpeechHearingOverride* findHearingOverride(
-        const PlayerRadioState& localPlayer,
-        std::uint64_t remoteRobloxUserId
-    )
-    {
-        for (const auto& hearing : localPlayer.hearing) {
-            if (hearing.remoteRobloxUserId == remoteRobloxUserId) {
-                return &hearing;
-            }
-        }
-
-        return nullptr;
-    }
-
-    void applyMuffledObstructionEffect(
-        float* outputPCM,
-        uint32_t sampleCount,
-        uint16_t channelCount,
-        float obstruction
-    )
-    {
-        if (!outputPCM || sampleCount == 0 || channelCount == 0) {
-            return;
-        }
-
-        obstruction = clampFloat(obstruction, 0.0f, 1.0f);
-
-        if (obstruction <= 0.001f) {
-            return;
-        }
-
-        const float dryGain = 1.0f - (0.35f * obstruction);
-        const float lowpassAmount = 0.18f + (0.67f * obstruction);
-        const uint32_t totalFrames = sampleCount;
-
-        for (uint16_t channel = 0; channel < channelCount; ++channel) {
-            float previous = outputPCM[channel];
-
-            for (uint32_t frame = 0; frame < totalFrames; ++frame) {
-                const uint32_t index = frame * channelCount + channel;
-                const float input = outputPCM[index];
-                previous = previous + ((input - previous) * (1.0f - lowpassAmount));
-                outputPCM[index] = previous * dryGain;
-            }
-        }
     }
 
     void applyGain(
@@ -206,7 +145,7 @@ namespace {
             return;
         }
 
-        gain = clampFloat(gain, 0.0f, 2.0f);
+        gain = clampFloat(gain, 0.0f, 1.0f);
 
         if (channelCount < 2) {
             applyGain(outputPCM, sampleCount, channelCount, gain);
@@ -471,50 +410,7 @@ public:
         const float distance =
             distanceBetween(localPlayer->position, remotePlayer->position);
 
-        float speechMinDistance = remotePlayer->speechMinDistance;
-        float speechMaxDistance = remotePlayer->speechMaxDistance;
-        float speechVolume = remotePlayer->speechVolume;
-        float obstruction = 0.0f;
-        bool muffled = false;
-
-        const SpeechHearingOverride* hearing =
-            findHearingOverride(*localPlayer, remotePlayer->robloxUserId);
-
-        if (hearing) {
-            obstruction = clampFloat(hearing->obstruction, 0.0f, 1.0f);
-
-            speechMaxDistance *= clampFloat(
-                hearing->maxDistanceMultiplier,
-                0.0f,
-                1.0f
-            );
-
-            speechVolume *= clampFloat(
-                hearing->volumeMultiplier,
-                0.0f,
-                1.0f
-            );
-
-            muffled = hearing->muffled;
-        }
-
-        speechMinDistance = clampFloat(
-            speechMinDistance,
-            0.0f,
-            10000.0f
-        );
-
-        speechMaxDistance = clampFloat(
-            speechMaxDistance,
-            speechMinDistance + 1.0f,
-            10000.0f
-        );
-
-        speechVolume = clampFloat(speechVolume, 0.0f, 2.0f);
-
-        const float gain =
-            proximityGain(distance, speechMinDistance, speechMaxDistance) *
-            speechVolume;
+        const float gain = proximityGain(distance);
 
         if (gain > 0.0f) {
             applyProximityPanAndGain(
@@ -526,24 +422,10 @@ public:
                 gain
             );
 
-            if (muffled || obstruction > 0.01f) {
-                applyMuffledObstructionEffect(
-                    outputPCM,
-                    sampleCount,
-                    channelCount,
-                    obstruction
-                );
-            }
-
             logAudioRouteThrottled(
                 "[AudioRoute] remote=" + remoteUsername +
                 " mode=proximity" +
-                " speechMode=" + remotePlayer->speechMode +
                 " distance=" + std::to_string(distance) +
-                " min=" + std::to_string(speechMinDistance) +
-                " max=" + std::to_string(speechMaxDistance) +
-                " volume=" + std::to_string(speechVolume) +
-                " obstruction=" + std::to_string(obstruction) +
                 " gain=" + std::to_string(gain)
             );
 

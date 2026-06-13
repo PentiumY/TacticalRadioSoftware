@@ -55,11 +55,6 @@ namespace {
     {
         return std::max(0.0f, value);
     }
-
-    float clampRange(float value, float minValue, float maxValue)
-    {
-        return std::max(minValue, std::min(maxValue, value));
-    }
     
 } // namespace
 
@@ -137,13 +132,10 @@ RadioRouteResult RadioRouter::evaluate(
                 continue;
             }
             
-            const float volume = clampRange(localRadio.volume, 0.0f, 2.0f);
+            const float volume = clampNonNegative(localRadio.volume);
             
-            const float clearRange = clampNonNegative(remoteRadio.minDistance);
-            const float maxRange = std::max(
-                clearRange + 1.0f,
-                clampNonNegative(remoteRadio.maxDistance)
-            );
+            const float clearRange = 500.0f;
+            const float maxRange = 3000.0f;
             
             const float quality = calculateRadioQuality(
                 distance,

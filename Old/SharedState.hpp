@@ -23,14 +23,6 @@ struct RadioSlot {
     float maxDistance = 3000.0f;
 };
 
-struct SpeechHearingOverride {
-    std::uint64_t remoteRobloxUserId = 0;
-    float obstruction = 0.0f;
-    float volumeMultiplier = 1.0f;
-    float maxDistanceMultiplier = 1.0f;
-    bool muffled = false;
-};
-
 struct PlayerRadioState {
     std::uint64_t robloxUserId = 0;
     std::string username;
@@ -46,12 +38,6 @@ struct PlayerRadioState {
     std::string squad;
     std::string radioId;
     std::vector<RadioSlot> radios;
-
-    std::string speechMode = "normal";
-    float speechVolume = 1.0f;
-    float speechMinDistance = 8.0f;
-    float speechMaxDistance = 90.0f;
-    std::vector<SpeechHearingOverride> hearing;
     
     std::uint64_t updatedAtMs = 0;
 };

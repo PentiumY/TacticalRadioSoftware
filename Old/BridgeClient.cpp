@@ -1,6 +1,5 @@
 #include "BridgeClient.hpp"
 
-#include <algorithm>
 #include <atomic>
 #include <chrono>
 #include <httplib.h>
@@ -38,33 +37,6 @@ static std::uint64_t jsonUint64OrZero(const json& value, const char* key) {
     return 0;
 }
 
-
-static float clampFloat(float value, float minValue, float maxValue) {
-    return std::max(minValue, std::min(maxValue, value));
-}
-
-static float jsonFloatOrDefault(const json& value, const char* key, float fallback) {
-    if (!value.contains(key) || value.at(key).is_null()) {
-        return fallback;
-    }
-
-    const auto& field = value.at(key);
-
-    if (field.is_number()) {
-        return field.get<float>();
-    }
-
-    if (field.is_string()) {
-        try {
-            return std::stof(field.get<std::string>());
-        } catch (...) {
-            return fallback;
-        }
-    }
-
-    return fallback;
-}
-
 static Vec3 parseVec3(const json& value) {
     Vec3 vec;
 
@@ -97,23 +69,6 @@ static PlayerRadioState parsePlayer(const json& value) {
     player.squad = value.value("squad", "");
     player.radioId = value.value("radioId", "");
 
-    player.speechMode = value.value("speechMode", "normal");
-    player.speechVolume = clampFloat(
-        jsonFloatOrDefault(value, "speechVolume", 1.0f),
-        0.0f,
-        2.0f
-    );
-    player.speechMinDistance = clampFloat(
-        jsonFloatOrDefault(value, "speechMinDistance", 8.0f),
-        0.0f,
-        10000.0f
-    );
-    player.speechMaxDistance = clampFloat(
-        jsonFloatOrDefault(value, "speechMaxDistance", 90.0f),
-        player.speechMinDistance + 1.0f,
-        10000.0f
-    );
-
     player.updatedAtMs = value.value("updatedAtMs", 0ULL);
 
     player.radios.clear();
@@ -127,59 +82,12 @@ static PlayerRadioState parsePlayer(const json& value) {
             radio.listening = radioJson.value("listening", false);
             radio.transmitting = radioJson.value("transmitting", false);
             radio.ear = radioJson.value("ear", "both");
-            radio.volume = clampFloat(
-                jsonFloatOrDefault(radioJson, "volume", 1.0f),
-                0.0f,
-                2.0f
-            );
-            radio.minDistance = clampFloat(
-                jsonFloatOrDefault(radioJson, "minDistance", 0.0f),
-                0.0f,
-                100000.0f
-            );
-            radio.maxDistance = clampFloat(
-                jsonFloatOrDefault(radioJson, "maxDistance", 3000.0f),
-                radio.minDistance + 1.0f,
-                100000.0f
-            );
+            radio.volume = radioJson.value("volume", 1.0f);
+            radio.minDistance = radioJson.value("minDistance", 0.0f);
+            radio.maxDistance = radioJson.value("maxDistance", 3000.0f);
 
             if (!radio.channel.empty()) {
                 player.radios.push_back(std::move(radio));
-            }
-        }
-    }
-
-    player.hearing.clear();
-
-    if (value.contains("hearing") && value.at("hearing").is_array()) {
-        for (const auto& hearingJson : value.at("hearing")) {
-            SpeechHearingOverride hearing;
-
-            hearing.remoteRobloxUserId =
-                jsonUint64OrZero(hearingJson, "remoteRobloxUserId");
-
-            hearing.obstruction = clampFloat(
-                jsonFloatOrDefault(hearingJson, "obstruction", 0.0f),
-                0.0f,
-                1.0f
-            );
-
-            hearing.volumeMultiplier = clampFloat(
-                jsonFloatOrDefault(hearingJson, "volumeMultiplier", 1.0f),
-                0.0f,
-                1.0f
-            );
-
-            hearing.maxDistanceMultiplier = clampFloat(
-                jsonFloatOrDefault(hearingJson, "maxDistanceMultiplier", 1.0f),
-                0.0f,
-                1.0f
-            );
-
-            hearing.muffled = hearingJson.value("muffled", false);
-
-            if (hearing.remoteRobloxUserId != 0) {
-                player.hearing.push_back(std::move(hearing));
             }
         }
     }
