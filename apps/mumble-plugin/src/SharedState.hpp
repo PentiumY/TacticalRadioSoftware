@@ -1,9 +1,10 @@
 #pragma once
 
 #include <cstdint>
+#include <memory>
 #include <mutex>
-#include <optional>
 #include <string>
+#include <utility>
 #include <vector>
 
 struct Vec3 {
@@ -52,7 +53,7 @@ struct PlayerRadioState {
     float speechMinDistance = 8.0f;
     float speechMaxDistance = 90.0f;
     std::vector<SpeechHearingOverride> hearing;
-    
+
     std::uint64_t updatedAtMs = 0;
 };
 
@@ -73,17 +74,21 @@ struct PluginSnapshot {
 
 class SharedState {
 public:
+    using SnapshotPtr = std::shared_ptr<const PluginSnapshot>;
+
     void setSnapshot(PluginSnapshot next) {
+        auto nextPtr = std::make_shared<PluginSnapshot>(std::move(next));
+
         std::lock_guard<std::mutex> lock(m_mutex);
-        m_snapshot = std::move(next);
+        m_snapshot = std::move(nextPtr);
     }
 
-    std::optional<PluginSnapshot> snapshot() const {
+    SnapshotPtr snapshot() const {
         std::lock_guard<std::mutex> lock(m_mutex);
         return m_snapshot;
     }
 
 private:
     mutable std::mutex m_mutex;
-    std::optional<PluginSnapshot> m_snapshot;
+    SnapshotPtr m_snapshot;
 };

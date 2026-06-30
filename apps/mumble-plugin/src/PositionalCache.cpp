@@ -64,7 +64,7 @@ void PositionalCache::update(
     next.cameraAxis[2] = next.avatarAxis[2];
 
     std::lock_guard<std::mutex> lock(m_mutex);
-    m_cache = next;
+    m_cache = std::move(next);
 }
 
 CachedPositionalData PositionalCache::snapshot() const noexcept {
@@ -101,7 +101,7 @@ bool PositionalCache::copyToMumble(
     return true;
 }
 
-std::optional<PlayerRadioState> PositionalCache::findPlayerByUsername(
+const PlayerRadioState* PositionalCache::findPlayerByUsername(
     const PluginSnapshot& snapshotValue,
     const std::string& username
 ) noexcept {
@@ -114,10 +114,10 @@ std::optional<PlayerRadioState> PositionalCache::findPlayerByUsername(
     );
 
     if (playerIt == snapshotValue.players.end()) {
-        return std::nullopt;
+        return nullptr;
     }
 
-    return *playerIt;
+    return &(*playerIt);
 }
 
 std::string PositionalCache::formatFloat(float value) noexcept {
@@ -142,7 +142,8 @@ void PositionalCache::normalizeDirectionOrDefault(float& x, float& y, float& z) 
         return;
     }
 
-    x /= length;
-    y /= length;
-    z /= length;
+    const float invLength = 1.0f / length;
+    x *= invLength;
+    y *= invLength;
+    z *= invLength;
 }

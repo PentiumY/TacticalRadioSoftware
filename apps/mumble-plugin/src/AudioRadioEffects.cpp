@@ -26,9 +26,12 @@ float smoothstep(float t)
     return t * t * (3.0f - 2.0f * t);
 }
 
-float softSaturate(float x)
+float fastSaturate(float x)
 {
-    return std::tanh(x);
+    // Fast tanh-like soft clip. This avoids calling std::tanh per audio sample.
+    x = clampFloat(x, -3.0f, 3.0f);
+    const float x2 = x * x;
+    return x * (27.0f + x2) / (27.0f + 9.0f * x2);
 }
 
 struct Biquad {
@@ -64,11 +67,13 @@ struct Biquad {
             return;
         }
 
-        b0 = newB0 / newA0;
-        b1 = newB1 / newA0;
-        b2 = newB2 / newA0;
-        a1 = newA1 / newA0;
-        a2 = newA2 / newA0;
+        const float invA0 = 1.0f / newA0;
+
+        b0 = newB0 * invA0;
+        b1 = newB1 * invA0;
+        b2 = newB2 * invA0;
+        a1 = newA1 * invA0;
+        a2 = newA2 * invA0;
     }
 
     void setLowpass(float cutoffHz, float q)
@@ -183,6 +188,16 @@ struct RadioFilterState {
     uint32_t noiseState = 0x12345678u;
 };
 
+struct CompressorParams {
+    float threshold = 0.1f;
+    float invRatio = 0.05f;
+    float attackCoeff = 0.5f;
+    float releaseCoeff = 0.01f;
+    float makeupGain = 3.0f;
+    float limiterDrive = 2.0f;
+    float postLimiterGain = 0.7f;
+};
+
 static RadioFilterState g_radioState;
 
 float noise(RadioFilterState& state)
@@ -220,25 +235,15 @@ float calculateExtremeFailure(float quality)
     );
 }
 
-float processWalkieTalkieCompressor(
-    float input,
-    RadioFilterState& state,
-    float quality
+CompressorParams makeCompressorParams(
+    float quality,
+    float compressionBadness,
+    float nearFailure,
+    float extremeFailure
 )
 {
-    quality = clampFloat(quality, 0.0f, 1.0f);
+    CompressorParams params;
 
-    const float badness = 1.0f - quality;
-    const float compressionBadness = smoothstep(badness);
-    const float nearFailure = calculateNearFailure(quality);
-    const float extremeFailure = calculateExtremeFailure(quality);
-
-    /*
-        Aggressive radio compressor.
-
-        Even good signals are compressed.
-        Bad signals become heavily flattened and limited.
-    */
     const float threshold =
         lerp(0.16f, 0.035f, compressionBadness) -
         extremeFailure * 0.018f;
@@ -247,10 +252,6 @@ float processWalkieTalkieCompressor(
         lerp(12.0f, 40.0f, compressionBadness) +
         extremeFailure * 20.0f;
 
-    /*
-        Fast attack catches consonants.
-        Long release creates that squeezed transmitter sound.
-    */
     const float attackMs =
         lerp(2.0f, 0.45f, compressionBadness);
 
@@ -258,68 +259,66 @@ float processWalkieTalkieCompressor(
         lerp(90.0f, 260.0f, compressionBadness) +
         nearFailure * 160.0f;
 
-    const float attackCoeff =
+    params.threshold = std::max(0.001f, threshold);
+    params.invRatio = 1.0f / std::max(1.0f, ratio);
+    params.attackCoeff =
         1.0f - std::exp(-1.0f / ((attackMs / 1000.0f) * SampleRate));
-
-    const float releaseCoeff =
+    params.releaseCoeff =
         1.0f - std::exp(-1.0f / ((releaseMs / 1000.0f) * SampleRate));
+    params.makeupGain =
+        lerp(2.8f, 5.5f, compressionBadness) +
+        nearFailure * 1.2f;
+    params.limiterDrive =
+        lerp(2.0f, 4.5f, compressionBadness) +
+        extremeFailure * 2.2f;
+    params.postLimiterGain =
+        lerp(0.72f, 0.50f, compressionBadness) -
+        extremeFailure * 0.10f;
 
+    (void) quality;
+    return params;
+}
+
+float processWalkieTalkieCompressor(
+    float input,
+    RadioFilterState& state,
+    const CompressorParams& params
+)
+{
     const float detector = std::fabs(input);
 
     if (detector > state.compressorEnvelope) {
         state.compressorEnvelope +=
-            attackCoeff * (detector - state.compressorEnvelope);
+            params.attackCoeff * (detector - state.compressorEnvelope);
     } else {
         state.compressorEnvelope +=
-            releaseCoeff * (detector - state.compressorEnvelope);
+            params.releaseCoeff * (detector - state.compressorEnvelope);
     }
 
     float gain = 1.0f;
 
-    if (state.compressorEnvelope > threshold) {
-        const float over = state.compressorEnvelope / threshold;
-        const float compressedOver = std::pow(over, 1.0f / ratio);
-        const float targetLevel = threshold * compressedOver;
+    if (state.compressorEnvelope > params.threshold) {
+        const float targetLevel =
+            params.threshold +
+            (state.compressorEnvelope - params.threshold) * params.invRatio;
 
         gain = targetLevel / (state.compressorEnvelope + 0.000001f);
     }
 
-    /*
-        Strong makeup gain pushes quiet speech forward.
-    */
-    const float makeupGain =
-        lerp(2.8f, 5.5f, compressionBadness) +
-        nearFailure * 1.2f;
+    float output = input * gain * params.makeupGain;
 
-    float output = input * gain * makeupGain;
-
-    /*
-        Transmitter limiter.
-    */
-    const float limiterDrive =
-        lerp(2.0f, 4.5f, compressionBadness) +
-        extremeFailure * 2.2f;
-
-    output = std::tanh(output * limiterDrive);
-
-    /*
-        Pull the level back after the limiter.
-    */
-    output *=
-        lerp(0.72f, 0.50f, compressionBadness) -
-        extremeFailure * 0.10f;
+    output = fastSaturate(output * params.limiterDrive);
+    output *= params.postLimiterGain;
 
     return output;
 }
 
 float processFailureGain(
     RadioFilterState& state,
-    float quality
+    float nearFailure,
+    float extremeFailure
 )
 {
-    const float nearFailure = calculateNearFailure(quality);
-    const float extremeFailure = calculateExtremeFailure(quality);
-
     if (nearFailure <= 0.0f) {
         state.failureTargetGain = 1.0f;
         state.failureGain += (1.0f - state.failureGain) * 0.02f;
@@ -410,7 +409,146 @@ float processFailureGain(
     return clampFloat(state.failureGain, 0.0f, 1.0f);
 }
 
+float processRadioFrame(
+    float mono,
+    RadioFilterState& state,
+    const CompressorParams& compressorParams,
+    float quality,
+    float filterBadness,
+    float nearFailure,
+    float extremeFailure,
+    float roughMix,
+    float roughLevels,
+    float staticAmount,
+    float crackleChance,
+    float crackleAmount,
+    float outputGain
+)
+{
+    /*
+        Strong radio bandpass.
+
+        Two high-pass filters remove low-end voice body.
+        Three low-pass filters remove high-end clarity.
+    */
+    float filtered = mono;
+
+    filtered = state.voiceHighpassA.process(filtered);
+    filtered = state.voiceHighpassB.process(filtered);
+
+    filtered = state.voiceLowpassA.process(filtered);
+    filtered = state.voiceLowpassB.process(filtered);
+    filtered = state.voiceLowpassC.process(filtered);
+
+    filtered = state.voicePresence.process(filtered);
+
+    /*
+        Aggressive walkie-talkie compression.
+    */
+    filtered = processWalkieTalkieCompressor(
+        filtered,
+        state,
+        compressorParams
+    );
+
+    /*
+        Extra transmitter grit.
+    */
+    const float transmitterGrit =
+        lerp(1.15f, 2.10f, filterBadness) +
+        nearFailure * 0.35f +
+        extremeFailure * 0.95f;
+
+    filtered = fastSaturate(filtered * transmitterGrit);
+
+    /*
+        Codec roughness near failure.
+    */
+    if (roughMix > 0.0f) {
+        const float rough = quantizeSample(filtered, roughLevels);
+        filtered = lerp(filtered, rough, roughMix);
+    }
+
+    /*
+        Failure gain creates signal breakup/dropouts.
+    */
+    const float failureGain =
+        processFailureGain(state, nearFailure, extremeFailure);
+
+    filtered *= failureGain;
+
+    /*
+        Band-limited hiss.
+    */
+    float hiss = noise(state);
+
+    hiss = state.hissHighpass.process(hiss);
+    hiss = state.hissLowpass.process(hiss);
+
+    filtered += hiss * staticAmount;
+
+    /*
+        Extra squelch noise during dropouts.
+        This makes near-zero quality sound like a broken radio signal
+        instead of just quiet voice.
+    */
+    if (state.failureNoiseEnvelope > 0.0001f) {
+        float failureNoise = noise(state);
+
+        failureNoise = state.failureNoiseHighpass.process(failureNoise);
+        failureNoise = state.failureNoiseLowpass.process(failureNoise);
+
+        const float dropoutNoiseAmount =
+            state.failureNoiseEnvelope *
+            lerp(0.010f, 0.075f, extremeFailure);
+
+        filtered += failureNoise * dropoutNoiseAmount;
+    }
+
+    /*
+        Occasional filtered crackle.
+    */
+    const float crackleRoll = random01(state);
+
+    if (crackleRoll < crackleChance) {
+        float crackle = noise(state) * crackleAmount;
+
+        crackle = state.crackleHighpass.process(crackle);
+        crackle = state.crackleLowpass.process(crackle);
+
+        filtered += crackle;
+    }
+
+    /*
+        Near absolute failure, some frames become mostly noise.
+        This smears the edge before max range cuts the transmission.
+    */
+    if (extremeFailure > 0.0f) {
+        const float smearChance =
+            extremeFailure * 0.0018f;
+
+        if (random01(state) < smearChance) {
+            const float smearMix =
+                lerp(0.15f, 0.75f, extremeFailure) *
+                random01(state);
+
+            float smearNoise = noise(state);
+
+            smearNoise = state.failureNoiseHighpass.process(smearNoise);
+            smearNoise = state.failureNoiseLowpass.process(smearNoise);
+
+            filtered = lerp(filtered, smearNoise * 0.12f, smearMix);
+        }
+    }
+
+    filtered *= outputGain;
+    filtered = clampFloat(filtered, -1.0f, 1.0f);
+
+    (void) quality;
+    return filtered;
 }
+
+} // namespace
 
 namespace AudioRadioEffects {
 
@@ -580,140 +718,72 @@ void applyRadioEffect(
     const float outputGain =
         volume * 0.95f * failureOutputFade;
 
-    for (uint32_t frame = 0; frame < sampleCount; ++frame) {
+    const CompressorParams compressorParams =
+        makeCompressorParams(
+            quality,
+            filterBadness,
+            nearFailure,
+            extremeFailure
+        );
+
+    if (channelCount == 2) {
+        float* frame = outputPCM;
+
+        for (uint32_t i = 0; i < sampleCount; ++i) {
+            const float mono = (frame[0] + frame[1]) * 0.5f;
+
+            const float filtered = processRadioFrame(
+                mono,
+                state,
+                compressorParams,
+                quality,
+                filterBadness,
+                nearFailure,
+                extremeFailure,
+                roughMix,
+                roughLevels,
+                staticAmount,
+                crackleChance,
+                crackleAmount,
+                outputGain
+            );
+
+            frame[0] = filtered;
+            frame[1] = filtered;
+            frame += 2;
+        }
+
+        return;
+    }
+
+    for (uint32_t frameIndex = 0; frameIndex < sampleCount; ++frameIndex) {
+        float* frame = outputPCM + static_cast<std::size_t>(frameIndex) * channelCount;
         float mono = 0.0f;
 
         for (uint16_t ch = 0; ch < channelCount; ++ch) {
-            mono += outputPCM[frame * channelCount + ch];
+            mono += frame[ch];
         }
 
         mono /= static_cast<float>(channelCount);
 
-        /*
-            Strong radio bandpass.
-
-            Two high-pass filters remove low-end voice body.
-            Three low-pass filters remove high-end clarity.
-        */
-        float filtered = mono;
-
-        filtered = state.voiceHighpassA.process(filtered);
-        filtered = state.voiceHighpassB.process(filtered);
-
-        filtered = state.voiceLowpassA.process(filtered);
-        filtered = state.voiceLowpassB.process(filtered);
-        filtered = state.voiceLowpassC.process(filtered);
-
-        filtered = state.voicePresence.process(filtered);
-
-        /*
-            Aggressive walkie-talkie compression.
-        */
-        filtered = processWalkieTalkieCompressor(
-            filtered,
+        const float filtered = processRadioFrame(
+            mono,
             state,
-            quality
+            compressorParams,
+            quality,
+            filterBadness,
+            nearFailure,
+            extremeFailure,
+            roughMix,
+            roughLevels,
+            staticAmount,
+            crackleChance,
+            crackleAmount,
+            outputGain
         );
 
-        /*
-            Extra transmitter grit.
-        */
-        const float transmitterGrit =
-            lerp(1.15f, 2.10f, filterBadness) +
-            nearFailure * 0.35f +
-            extremeFailure * 0.95f;
-
-        filtered = softSaturate(filtered * transmitterGrit);
-
-        /*
-            Codec roughness near failure.
-        */
-        if (roughMix > 0.0f) {
-            const float rough = quantizeSample(filtered, roughLevels);
-            filtered = lerp(filtered, rough, roughMix);
-        }
-
-        /*
-            Failure gain creates signal breakup/dropouts.
-        */
-        const float failureGain =
-            processFailureGain(state, quality);
-
-        filtered *= failureGain;
-
-        /*
-            Band-limited hiss.
-        */
-        float hiss = noise(state);
-
-        hiss = state.hissHighpass.process(hiss);
-        hiss = state.hissLowpass.process(hiss);
-
-        filtered += hiss * staticAmount;
-
-        /*
-            Extra squelch noise during dropouts.
-            This makes near-zero quality sound like a broken radio signal
-            instead of just quiet voice.
-        */
-        if (state.failureNoiseEnvelope > 0.0001f) {
-            float failureNoise = noise(state);
-
-            failureNoise = state.failureNoiseHighpass.process(failureNoise);
-            failureNoise = state.failureNoiseLowpass.process(failureNoise);
-
-            const float dropoutNoiseAmount =
-                state.failureNoiseEnvelope *
-                lerp(0.010f, 0.075f, extremeFailure);
-
-            filtered += failureNoise * dropoutNoiseAmount;
-        }
-
-        /*
-            Occasional filtered crackle.
-        */
-        const float crackleRoll = random01(state);
-
-        if (crackleRoll < crackleChance) {
-            float crackle = noise(state) * crackleAmount;
-
-            crackle = state.crackleHighpass.process(crackle);
-            crackle = state.crackleLowpass.process(crackle);
-
-            filtered += crackle;
-        }
-
-        /*
-            Near absolute failure, some frames become mostly noise.
-            This smears the edge before max range cuts the transmission.
-        */
-        if (extremeFailure > 0.0f) {
-            const float smearChance =
-                extremeFailure * 0.0018f;
-
-            if (random01(state) < smearChance) {
-                const float smearMix =
-                    lerp(0.15f, 0.75f, extremeFailure) *
-                    random01(state);
-
-                float smearNoise = noise(state);
-
-                smearNoise = state.failureNoiseHighpass.process(smearNoise);
-                smearNoise = state.failureNoiseLowpass.process(smearNoise);
-
-                filtered = lerp(filtered, smearNoise * 0.12f, smearMix);
-            }
-        }
-
-        filtered *= outputGain;
-        filtered = clampFloat(filtered, -1.0f, 1.0f);
-
-        /*
-            Keep the radio signal centered.
-            Left/right routing is handled by applyHeadsetPan().
-        */
         for (uint16_t ch = 0; ch < channelCount; ++ch) {
-            outputPCM[frame * channelCount + ch] = filtered;
+            frame[ch] = filtered;
         }
     }
 }
@@ -738,14 +808,14 @@ void applyHeadsetPan(
     } else if (ear == "right") {
         leftGain = 0.0f;
         rightGain = 1.0f;
-    } else {
-        leftGain = 1.0f;
-        rightGain = 1.0f;
     }
 
-    for (uint32_t frame = 0; frame < sampleCount; ++frame) {
-        outputPCM[frame * channelCount + 0] *= leftGain;
-        outputPCM[frame * channelCount + 1] *= rightGain;
+    float* frame = outputPCM;
+
+    for (uint32_t i = 0; i < sampleCount; ++i) {
+        frame[0] *= leftGain;
+        frame[1] *= rightGain;
+        frame += channelCount;
     }
 }
 

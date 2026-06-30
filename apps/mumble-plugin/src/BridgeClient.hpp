@@ -8,6 +8,10 @@
 #include <string>
 #include <thread>
 
+namespace httplib {
+    class Client;
+}
+
 class BridgeClient {
 public:
     explicit BridgeClient(SharedState& state);
@@ -21,12 +25,13 @@ public:
 
 private:
     void run();
-    bool fetchOnce();
-    std::string snapshotPath() const;
+    bool fetchOnce(httplib::Client& client);
+    std::string makeSnapshotPath() const;
 
 private:
     SharedState& m_state;
     BridgeConfig m_config;
+    std::string m_snapshotPath;
 
     std::atomic<bool> m_running = false;
     std::atomic<bool> m_hasEverConnected = false;

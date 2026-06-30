@@ -15,17 +15,17 @@
 #include <chrono>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
+#include <mutex>
 #include <string>
 #include <thread>
+#include <unordered_map>
 #include <vector>
 
 namespace {
     constexpr std::chrono::milliseconds CACHE_UPDATE_INTERVAL{50};
 
     constexpr bool ENABLE_DISTANCE_DEBUG = false;
-
-    constexpr float DEFAULT_PROXIMITY_FULL_VOLUME_DISTANCE = 8.0f;
-    constexpr float DEFAULT_PROXIMITY_MAX_DISTANCE = 90.0f;
 
     float clampFloat(float value, float minValue, float maxValue)
     {
@@ -51,11 +51,11 @@ namespace {
             return;
         }
 
-        const uint32_t totalSamples = sampleCount * channelCount;
+        const std::size_t totalSamples =
+            static_cast<std::size_t>(sampleCount) *
+            static_cast<std::size_t>(channelCount);
 
-        for (uint32_t i = 0; i < totalSamples; ++i) {
-            outputPCM[i] = 0.0f;
-        }
+        std::memset(outputPCM, 0, totalSamples * sizeof(float));
     }
 
     float proximityGain(
@@ -127,15 +127,17 @@ namespace {
 
         const float dryGain = 1.0f - (0.35f * obstruction);
         const float lowpassAmount = 0.18f + (0.67f * obstruction);
-        const uint32_t totalFrames = sampleCount;
+        const float blend = 1.0f - lowpassAmount;
 
         for (uint16_t channel = 0; channel < channelCount; ++channel) {
             float previous = outputPCM[channel];
 
-            for (uint32_t frame = 0; frame < totalFrames; ++frame) {
-                const uint32_t index = frame * channelCount + channel;
+            for (uint32_t frame = 0; frame < sampleCount; ++frame) {
+                const std::size_t index =
+                    static_cast<std::size_t>(frame) * channelCount + channel;
+
                 const float input = outputPCM[index];
-                previous = previous + ((input - previous) * (1.0f - lowpassAmount));
+                previous += (input - previous) * blend;
                 outputPCM[index] = previous * dryGain;
             }
         }
@@ -154,42 +156,12 @@ namespace {
 
         gain = clampFloat(gain, 0.0f, 2.0f);
 
-        const uint32_t totalSamples = sampleCount * channelCount;
+        const std::size_t totalSamples =
+            static_cast<std::size_t>(sampleCount) *
+            static_cast<std::size_t>(channelCount);
 
-        for (uint32_t i = 0; i < totalSamples; ++i) {
+        for (std::size_t i = 0; i < totalSamples; ++i) {
             outputPCM[i] *= gain;
-        }
-    }
-
-    void applyHeadsetPan(
-        float* outputPCM,
-        uint32_t sampleCount,
-        uint16_t channelCount,
-        const std::string& ear
-    )
-    {
-        if (!outputPCM || sampleCount == 0 || channelCount == 0) {
-            return;
-        }
-
-        if (channelCount < 2) {
-            return;
-        }
-
-        float leftGain = 1.0f;
-        float rightGain = 1.0f;
-
-        if (ear == "left") {
-            leftGain = 1.0f;
-            rightGain = 0.0f;
-        } else if (ear == "right") {
-            leftGain = 0.0f;
-            rightGain = 1.0f;
-        }
-
-        for (uint32_t frame = 0; frame < sampleCount; ++frame) {
-            outputPCM[frame * channelCount + 0] *= leftGain;
-            outputPCM[frame * channelCount + 1] *= rightGain;
         }
     }
 
@@ -223,8 +195,9 @@ namespace {
             std::sqrt(forwardX * forwardX + forwardZ * forwardZ);
 
         if (forwardLength > 0.001f) {
-            forwardX /= forwardLength;
-            forwardZ /= forwardLength;
+            const float invForwardLength = 1.0f / forwardLength;
+            forwardX *= invForwardLength;
+            forwardZ *= invForwardLength;
         } else {
             forwardX = 0.0f;
             forwardZ = -1.0f;
@@ -248,9 +221,12 @@ namespace {
         const float leftGain = std::sqrt((1.0f - pan) * 0.5f) * gain;
         const float rightGain = std::sqrt((1.0f + pan) * 0.5f) * gain;
 
-        for (uint32_t frame = 0; frame < sampleCount; ++frame) {
-            outputPCM[frame * channelCount + 0] *= leftGain;
-            outputPCM[frame * channelCount + 1] *= rightGain;
+        float* frame = outputPCM;
+
+        for (uint32_t i = 0; i < sampleCount; ++i) {
+            frame[0] *= leftGain;
+            frame[1] *= rightGain;
+            frame += channelCount;
         }
     }
 }
@@ -295,6 +271,7 @@ public:
         logAlways("[SpatialStable] shutdown");
         stopCacheThread();
         m_bridge.stop();
+        clearUsernameCache();
     }
 
     void releaseResource(const void* pointer) noexcept override {
@@ -424,17 +401,17 @@ public:
             return false;
         }
 
-        const auto localPlayer =
+        const PlayerRadioState* localPlayer =
             PositionalCache::findPlayerByUsername(*snapshot, localUsername);
 
-        if (!localPlayer) {
+        if (localPlayer == nullptr) {
             return false;
         }
 
-        const auto remotePlayer =
+        const PlayerRadioState* remotePlayer =
             PositionalCache::findPlayerByUsername(*snapshot, remoteUsername);
 
-        if (!remotePlayer) {
+        if (remotePlayer == nullptr) {
             return false;
         }
 
@@ -450,20 +427,22 @@ public:
                 radioRoute.quality
             );
 
-            applyHeadsetPan(
+            AudioRadioEffects::applyHeadsetPan(
                 outputPCM,
                 sampleCount,
                 channelCount,
                 radioRoute.ear
             );
 
-            logAudioRouteThrottled(
-                "[AudioRoute] remote=" + remoteUsername +
-                " mode=radio" +
-                " channel=" + radioRoute.channel +
-                " ear=" + radioRoute.ear +
-                " volume=" + std::to_string(radioRoute.volume)
-            );
+            if (shouldLogAudioRoute()) {
+                m_logger.logWithoutMumble(
+                    "[AudioRoute] remote=" + remoteUsername +
+                    " mode=radio" +
+                    " channel=" + radioRoute.channel +
+                    " ear=" + radioRoute.ear +
+                    " volume=" + std::to_string(radioRoute.volume)
+                );
+            }
 
             return true;
         }
@@ -535,33 +514,38 @@ public:
                 );
             }
 
-            logAudioRouteThrottled(
-                "[AudioRoute] remote=" + remoteUsername +
-                " mode=proximity" +
-                " speechMode=" + remotePlayer->speechMode +
-                " distance=" + std::to_string(distance) +
-                " min=" + std::to_string(speechMinDistance) +
-                " max=" + std::to_string(speechMaxDistance) +
-                " volume=" + std::to_string(speechVolume) +
-                " obstruction=" + std::to_string(obstruction) +
-                " gain=" + std::to_string(gain)
-            );
+            if (shouldLogAudioRoute()) {
+                m_logger.logWithoutMumble(
+                    "[AudioRoute] remote=" + remoteUsername +
+                    " mode=proximity" +
+                    " speechMode=" + remotePlayer->speechMode +
+                    " distance=" + std::to_string(distance) +
+                    " min=" + std::to_string(speechMinDistance) +
+                    " max=" + std::to_string(speechMaxDistance) +
+                    " volume=" + std::to_string(speechVolume) +
+                    " obstruction=" + std::to_string(obstruction) +
+                    " gain=" + std::to_string(gain)
+                );
+            }
 
             return true;
         }
 
         muteAudio(outputPCM, sampleCount, channelCount);
 
-        logAudioRouteThrottled(
-            "[AudioRoute] remote=" + remoteUsername +
-            " mode=muted" +
-            " distance=" + std::to_string(distance)
-        );
+        if (shouldLogAudioRoute()) {
+            m_logger.logWithoutMumble(
+                "[AudioRoute] remote=" + remoteUsername +
+                " mode=muted" +
+                " distance=" + std::to_string(distance)
+            );
+        }
 
         return true;
     }
 
     void onServerSynchronized(mumble_connection_t connection) noexcept override {
+        clearUsernameCache();
         m_identity.update(m_api, connection);
         logAlways("[SpatialStable] server synchronized username=" + m_identity.username());
     }
@@ -569,6 +553,7 @@ public:
     void onServerDisconnected(mumble_connection_t connection) noexcept override {
         (void) connection;
 
+        clearUsernameCache();
         m_identity.clear();
         m_positionalCache.invalidate("SERVER_DISCONNECTED");
         logAlways("[SpatialStable] server disconnected");
@@ -576,6 +561,15 @@ public:
 
 private:
     std::string usernameForUserId(mumble_userid_t userID) noexcept {
+        {
+            std::lock_guard<std::mutex> lock(m_usernameCacheMutex);
+            const auto cached = m_usernameCache.find(userID);
+
+            if (cached != m_usernameCache.end()) {
+                return cached->second;
+            }
+        }
+
         try {
             const mumble_connection_t connection = m_api.getActiveServerConnection();
 
@@ -584,19 +578,33 @@ private:
             }
 
             const MumbleString username = m_api.getUserName(connection, userID);
-            return static_cast<std::string>(username);
+            const std::string usernameString = static_cast<std::string>(username);
+
+            if (usernameString.empty()) {
+                return {};
+            }
+
+            {
+                std::lock_guard<std::mutex> lock(m_usernameCacheMutex);
+                m_usernameCache[userID] = usernameString;
+            }
+
+            return usernameString;
         } catch (...) {
             return {};
         }
     }
 
-    void logAudioRouteThrottled(const std::string& message) noexcept {
+    void clearUsernameCache() noexcept {
+        std::lock_guard<std::mutex> lock(m_usernameCacheMutex);
+        m_usernameCache.clear();
+    }
+
+    bool shouldLogAudioRoute() noexcept {
         const std::uint64_t count =
             m_audioRouteLogCounter.fetch_add(1, std::memory_order_relaxed);
 
-        if ((count % 100) == 0) {
-            m_logger.logWithoutMumble(message);
-        }
+        return (count % 100) == 0;
     }
 
     void runCacheUpdateOnce() noexcept {
@@ -616,9 +624,10 @@ private:
             return;
         }
 
-        const auto localPlayer = PositionalCache::findPlayerByUsername(*snapshot, username);
+        const PlayerRadioState* localPlayer =
+            PositionalCache::findPlayerByUsername(*snapshot, username);
 
-        if (!localPlayer) {
+        if (localPlayer == nullptr) {
             m_positionalCache.invalidate(
                 "USERNAME_NOT_FOUND_IN_BRIDGE username=" + username +
                 " bridgePlayers=" + std::to_string(snapshot->players.size()) +
@@ -707,6 +716,9 @@ private:
     std::atomic<std::uint64_t> m_fetchSuccesses{0};
     std::atomic<std::uint64_t> m_fetchFailures{0};
     std::atomic<std::uint64_t> m_audioRouteLogCounter{0};
+
+    std::mutex m_usernameCacheMutex;
+    std::unordered_map<mumble_userid_t, std::string> m_usernameCache;
 
     std::atomic<bool> m_cacheThreadRunning{false};
     std::thread m_cacheThread;

@@ -4,7 +4,6 @@
 
 #include <cstddef>
 #include <mutex>
-#include <optional>
 #include <string>
 
 struct CachedPositionalData {
@@ -26,7 +25,12 @@ struct CachedPositionalData {
 class PositionalCache {
 public:
     void invalidate(const std::string& status) noexcept;
-    void update(const PluginSnapshot& snapshot, const PlayerRadioState& me, const std::string& mumbleUsername) noexcept;
+    void update(
+        const PluginSnapshot& snapshot,
+        const PlayerRadioState& me,
+        const std::string& mumbleUsername
+    ) noexcept;
+
     CachedPositionalData snapshot() const noexcept;
 
     bool copyToMumble(
@@ -38,7 +42,7 @@ public:
         float* cameraAxis
     ) const noexcept;
 
-    static std::optional<PlayerRadioState> findPlayerByUsername(
+    static const PlayerRadioState* findPlayerByUsername(
         const PluginSnapshot& snapshot,
         const std::string& username
     ) noexcept;

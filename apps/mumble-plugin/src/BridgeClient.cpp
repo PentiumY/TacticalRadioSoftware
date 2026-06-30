@@ -11,12 +11,18 @@
 
 using json = nlohmann::json;
 
-static std::uint64_t jsonUint64OrZero(const json& value, const char* key) {
-    if (!value.contains(key) || value.at(key).is_null()) {
+namespace {
+
+constexpr bool ENABLE_BRIDGE_SNAPSHOT_DEBUG = false;
+
+std::uint64_t jsonUint64OrZero(const json& value, const char* key) {
+    const auto it = value.find(key);
+
+    if (it == value.end() || it->is_null()) {
         return 0;
     }
 
-    const auto& field = value.at(key);
+    const auto& field = *it;
 
     if (field.is_number_unsigned()) {
         return field.get<std::uint64_t>();
@@ -38,17 +44,18 @@ static std::uint64_t jsonUint64OrZero(const json& value, const char* key) {
     return 0;
 }
 
-
-static float clampFloat(float value, float minValue, float maxValue) {
+float clampFloat(float value, float minValue, float maxValue) {
     return std::max(minValue, std::min(maxValue, value));
 }
 
-static float jsonFloatOrDefault(const json& value, const char* key, float fallback) {
-    if (!value.contains(key) || value.at(key).is_null()) {
+float jsonFloatOrDefault(const json& value, const char* key, float fallback) {
+    const auto it = value.find(key);
+
+    if (it == value.end() || it->is_null()) {
         return fallback;
     }
 
-    const auto& field = value.at(key);
+    const auto& field = *it;
 
     if (field.is_number()) {
         return field.get<float>();
@@ -65,7 +72,7 @@ static float jsonFloatOrDefault(const json& value, const char* key, float fallba
     return fallback;
 }
 
-static Vec3 parseVec3(const json& value) {
+Vec3 parseVec3(const json& value) {
     Vec3 vec;
 
     vec.x = value.value("x", 0.0f);
@@ -75,19 +82,23 @@ static Vec3 parseVec3(const json& value) {
     return vec;
 }
 
-static PlayerRadioState parsePlayer(const json& value) {
+PlayerRadioState parsePlayer(const json& value) {
     PlayerRadioState player;
 
     player.robloxUserId = jsonUint64OrZero(value, "robloxUserId");
     player.username = value.value("username", "");
     player.displayName = value.value("displayName", "");
 
-    if (value.contains("position") && value.at("position").is_object()) {
-        player.position = parseVec3(value.at("position"));
+    const auto positionIt = value.find("position");
+
+    if (positionIt != value.end() && positionIt->is_object()) {
+        player.position = parseVec3(*positionIt);
     }
 
-    if (value.contains("lookVector") && value.at("lookVector").is_object()) {
-        player.lookVector = parseVec3(value.at("lookVector"));
+    const auto lookVectorIt = value.find("lookVector");
+
+    if (lookVectorIt != value.end() && lookVectorIt->is_object()) {
+        player.lookVector = parseVec3(*lookVectorIt);
     }
 
     player.frequency = value.value("frequency", "");
@@ -116,10 +127,12 @@ static PlayerRadioState parsePlayer(const json& value) {
 
     player.updatedAtMs = value.value("updatedAtMs", 0ULL);
 
-    player.radios.clear();
+    const auto radiosIt = value.find("radios");
 
-    if (value.contains("radios") && value.at("radios").is_array()) {
-        for (const auto& radioJson : value.at("radios")) {
+    if (radiosIt != value.end() && radiosIt->is_array()) {
+        player.radios.reserve(radiosIt->size());
+
+        for (const auto& radioJson : *radiosIt) {
             RadioSlot radio;
 
             radio.id = radioJson.value("id", 0);
@@ -149,10 +162,12 @@ static PlayerRadioState parsePlayer(const json& value) {
         }
     }
 
-    player.hearing.clear();
+    const auto hearingIt = value.find("hearing");
 
-    if (value.contains("hearing") && value.at("hearing").is_array()) {
-        for (const auto& hearingJson : value.at("hearing")) {
+    if (hearingIt != value.end() && hearingIt->is_array()) {
+        player.hearing.reserve(hearingIt->size());
+
+        for (const auto& hearingJson : *hearingIt) {
             SpeechHearingOverride hearing;
 
             hearing.remoteRobloxUserId =
@@ -187,7 +202,7 @@ static PlayerRadioState parsePlayer(const json& value) {
     return player;
 }
 
-static TxLock parseTxLock(const json& value) {
+TxLock parseTxLock(const json& value) {
     TxLock lock;
 
     lock.frequency = value.value("frequency", "");
@@ -197,6 +212,8 @@ static TxLock parseTxLock(const json& value) {
 
     return lock;
 }
+
+} // namespace
 
 BridgeClient::BridgeClient(SharedState& state)
     : m_state(state) {}
@@ -211,6 +228,7 @@ void BridgeClient::start(BridgeConfig config) {
     }
 
     m_config = std::move(config);
+    m_snapshotPath = makeSnapshotPath();
 
     {
         std::lock_guard<std::mutex> lock(m_statusMutex);
@@ -239,7 +257,7 @@ std::string BridgeClient::lastStatus() const {
     return m_lastStatus;
 }
 
-std::string BridgeClient::snapshotPath() const {
+std::string BridgeClient::makeSnapshotPath() const {
     std::ostringstream ss;
 
     ss
@@ -253,8 +271,13 @@ std::string BridgeClient::snapshotPath() const {
 void BridgeClient::run() {
     int tick = 0;
 
+    httplib::Client client(m_config.baseUrl);
+    client.set_connection_timeout(2, 0);
+    client.set_read_timeout(2, 0);
+    client.set_write_timeout(2, 0);
+
     while (m_running.load()) {
-        const bool ok = fetchOnce();
+        const bool ok = fetchOnce(client);
 
         if (ok) {
             m_hasEverConnected.store(true);
@@ -263,9 +286,9 @@ void BridgeClient::run() {
             m_lastStatus = "connected";
         }
 
-        tick++;
+        ++tick;
 
-        if (tick % 25 == 0) {
+        if (ENABLE_BRIDGE_SNAPSHOT_DEBUG && tick % 25 == 0) {
             const auto snapshot = m_state.snapshot();
 
             if (snapshot) {
@@ -291,17 +314,11 @@ void BridgeClient::run() {
     }
 }
 
-bool BridgeClient::fetchOnce() {
-    const std::string path = snapshotPath();
+bool BridgeClient::fetchOnce(httplib::Client& client) {
+    const std::string& path = m_snapshotPath;
     const std::string fullUrl = m_config.baseUrl + path;
 
     try {
-        httplib::Client client(m_config.baseUrl);
-
-        client.set_connection_timeout(2, 0);
-        client.set_read_timeout(2, 0);
-        client.set_write_timeout(2, 0);
-
         {
             std::lock_guard<std::mutex> lock(m_statusMutex);
             m_lastStatus = "fetching: " + fullUrl;
@@ -336,14 +353,22 @@ bool BridgeClient::fetchOnce() {
         snapshot.nowMs = parsed.value("nowMs", 0ULL);
         snapshot.localRobloxUserId = jsonUint64OrZero(parsed, "localRobloxUserId");
 
-        if (parsed.contains("players") && parsed.at("players").is_array()) {
-            for (const auto& playerJson : parsed.at("players")) {
+        const auto playersIt = parsed.find("players");
+
+        if (playersIt != parsed.end() && playersIt->is_array()) {
+            snapshot.players.reserve(playersIt->size());
+
+            for (const auto& playerJson : *playersIt) {
                 snapshot.players.push_back(parsePlayer(playerJson));
             }
         }
 
-        if (parsed.contains("txLocks") && parsed.at("txLocks").is_array()) {
-            for (const auto& lockJson : parsed.at("txLocks")) {
+        const auto locksIt = parsed.find("txLocks");
+
+        if (locksIt != parsed.end() && locksIt->is_array()) {
+            snapshot.txLocks.reserve(locksIt->size());
+
+            for (const auto& lockJson : *locksIt) {
                 snapshot.txLocks.push_back(parseTxLock(lockJson));
             }
         }
