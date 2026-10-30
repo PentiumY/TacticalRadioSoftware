@@ -7,6 +7,8 @@
 #include <iostream>
 #include <nlohmann/json.hpp>
 #include <sstream>
+#include <memory>
+#include <cctype>
 #include <thread>
 
 using json = nlohmann::json;
@@ -218,174 +220,215 @@ TxLock parseTxLock(const json& value) {
 BridgeClient::BridgeClient(SharedState& state)
     : m_state(state) {}
 
-BridgeClient::~BridgeClient() {
-    stop();
-}
+BridgeClient::~BridgeClient() { stop(); }
 
 void BridgeClient::start(BridgeConfig config) {
-    if (m_running.exchange(true)) {
-        return;
-    }
-
+    if (m_running.exchange(true)) return;
     m_config = std::move(config);
-    m_snapshotPath = makeSnapshotPath();
-
-    {
-        std::lock_guard<std::mutex> lock(m_statusMutex);
-        m_lastStatus = "starting";
-    }
-
+    setStatus("starting");
     m_thread = std::thread(&BridgeClient::run, this);
 }
 
 void BridgeClient::stop() {
-    if (!m_running.exchange(false)) {
-        return;
-    }
-
-    if (m_thread.joinable()) {
-        m_thread.join();
-    }
+    if (!m_running.exchange(false)) return;
+    if (m_thread.joinable()) m_thread.join();
 }
 
-bool BridgeClient::hasEverConnected() const {
-    return m_hasEverConnected.load();
+void BridgeClient::setMumbleUsername(const std::string& username) {
+    std::lock_guard<std::mutex> lock(m_statusMutex);
+    m_mumbleUsername = username;
 }
+
+std::string BridgeClient::selectedRobloxUsername() const {
+    std::lock_guard<std::mutex> lock(m_statusMutex);
+    return m_selectedRobloxUsername;
+}
+
+bool BridgeClient::hasEverConnected() const { return m_hasEverConnected.load(); }
 
 std::string BridgeClient::lastStatus() const {
     std::lock_guard<std::mutex> lock(m_statusMutex);
     return m_lastStatus;
 }
 
-std::string BridgeClient::makeSnapshotPath() const {
-    std::ostringstream ss;
+void BridgeClient::setStatus(const std::string& status) {
+    std::lock_guard<std::mutex> lock(m_statusMutex);
+    m_lastStatus = status;
+}
 
-    ss
-        << "/v1/plugin/snapshot"
-        << "?placeId=" << m_config.placeId
-        << "&jobId=" << m_config.jobId;
+// Encode a username or JobId as an HTTP query parameter.
+static std::string urlEncode(const std::string& input) {
+    static const char hex[] = "0123456789ABCDEF";
+    std::string result;
+    for (unsigned char c : input) {
+        if (std::isalnum(c) || c == '-' || c == '_' || c == '.' || c == '~') {
+            result += static_cast<char>(c);
+        } else {
+            result += '%';
+            result += hex[c >> 4];
+            result += hex[c & 15];
+        }
+    }
+    return result;
+}
 
-    return ss.str();
+bool BridgeClient::discoverSession(httplib::Client& client, const std::string& username,
+                                   std::uint64_t& placeId, std::string& jobId) {
+    try {
+        auto response = client.Get("/v1/sessions?username=" + urlEncode(username));
+        if (!response || response->status != 200) {
+            setStatus("session discovery unavailable");
+            return false;
+        }
+        const auto parsed = json::parse(response->body);
+        if (!parsed.contains("sessions") || !parsed["sessions"].is_array()) return false;
+        const auto& sessions = parsed["sessions"];
+        // Avoid choosing arbitrarily if the account appears in multiple active servers.
+        if (sessions.size() != 1 || !sessions[0].is_object()) {
+            setStatus(sessions.empty() ? "Roblox player not in game" : "multiple Roblox sessions found");
+            return false;
+        }
+        const auto& session = sessions[0];
+        placeId = jsonUint64OrZero(session, "placeId");
+        jobId = session.value("jobId", std::string{});
+        if (placeId != 0 && !jobId.empty()) {
+            setStatus("session discovered placeId=" + std::to_string(placeId) + " jobId=" + jobId);
+            return true;
+        }
+        setStatus("session response missing placeId or jobId");
+        return false;
+    } catch (const std::exception& error) {
+        setStatus(std::string("session discovery error: ") + error.what());
+        return false;
+    } catch (...) {
+        setStatus("session discovery failed");
+        return false;
+    }
 }
 
 void BridgeClient::run() {
-    int tick = 0;
-
-    httplib::Client client(m_config.baseUrl);
-    client.set_connection_timeout(2, 0);
-    client.set_read_timeout(2, 0);
-    client.set_write_timeout(2, 0);
+    std::string activeUrl;
+    std::unique_ptr<httplib::Client> client;
+    std::uint64_t activePlace = 0;
+    std::string activeJob;
+    std::string oldSelectedUsername;
+    bool oldAuto = false;
+    auto nextDiscovery = std::chrono::steady_clock::time_point{};
+    auto nextConfigRead = std::chrono::steady_clock::time_point{};
+    BridgeConfig config = m_config;
 
     while (m_running.load()) {
-        const bool ok = fetchOnce(client);
-
-        if (ok) {
-            m_hasEverConnected.store(true);
-
-            std::lock_guard<std::mutex> lock(m_statusMutex);
-            m_lastStatus = "connected";
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= nextConfigRead) {
+            config = loadBridgeConfig();
+            nextConfigRead = now + std::chrono::seconds(1);
         }
 
-        ++tick;
-
-        if (ENABLE_BRIDGE_SNAPSHOT_DEBUG && tick % 25 == 0) {
-            const auto snapshot = m_state.snapshot();
-
-            if (snapshot) {
-                std::cout
-                    << "[TacticalRadio] Snapshot ok: players="
-                    << snapshot->players.size()
-                    << ", txLocks="
-                    << snapshot->txLocks.size()
-                    << "\n";
-            } else {
-                std::cout << "[TacticalRadio] No snapshot yet\n";
-            }
-        }
-
-        std::this_thread::sleep_for(
-            std::chrono::milliseconds(m_config.pollIntervalMs)
-        );
-    }
-
-    {
-        std::lock_guard<std::mutex> lock(m_statusMutex);
-        m_lastStatus = "stopped";
-    }
-}
-
-bool BridgeClient::fetchOnce(httplib::Client& client) {
-    const std::string& path = m_snapshotPath;
-    const std::string fullUrl = m_config.baseUrl + path;
-
-    try {
+        std::string mumbleUsername;
         {
             std::lock_guard<std::mutex> lock(m_statusMutex);
-            m_lastStatus = "fetching: " + fullUrl;
+            mumbleUsername = m_mumbleUsername;
+        }
+        const std::string selected = config.localRobloxUsername.empty()
+            ? mumbleUsername : config.localRobloxUsername;
+        {
+            std::lock_guard<std::mutex> lock(m_statusMutex);
+            m_selectedRobloxUsername = selected;
         }
 
+        if (activeUrl != config.baseUrl || !client) {
+            activeUrl = config.baseUrl;
+            client.reset(new httplib::Client(activeUrl));
+            client->set_connection_timeout(2, 0);
+            client->set_read_timeout(2, 0);
+            client->set_write_timeout(2, 0);
+            nextDiscovery = std::chrono::steady_clock::time_point{};
+            activePlace = 0;
+            activeJob.clear();
+            m_state.setSnapshot(PluginSnapshot{});
+        }
+
+        if (selected != oldSelectedUsername || config.autoSession != oldAuto) {
+            oldSelectedUsername = selected;
+            oldAuto = config.autoSession;
+            nextDiscovery = std::chrono::steady_clock::time_point{};
+            activePlace = 0;
+            activeJob.clear();
+            m_state.setSnapshot(PluginSnapshot{});
+        }
+
+        if (config.autoSession) {
+            if (now >= nextDiscovery) {
+                nextDiscovery = now + std::chrono::seconds(2);
+                std::uint64_t newPlace = 0;
+                std::string newJob;
+                const bool found = !selected.empty() && discoverSession(*client, selected, newPlace, newJob);
+                if (!found || newPlace != activePlace || newJob != activeJob) {
+                    m_state.setSnapshot(PluginSnapshot{});
+                }
+                activePlace = found ? newPlace : 0;
+                activeJob = found ? newJob : std::string{};
+            }
+        } else {
+            if (activePlace != config.placeId || activeJob != config.jobId)
+                m_state.setSnapshot(PluginSnapshot{});
+            activePlace = config.placeId;
+            activeJob = config.jobId;
+        }
+
+        if (activePlace && !activeJob.empty()) {
+            std::ostringstream path;
+            path << "/v1/plugin/snapshot?placeId=" << activePlace
+                 << "&jobId=" << urlEncode(activeJob)
+                 << "&localRobloxUsername=" << urlEncode(selected);
+            if (fetchOnce(*client, path.str(), config)) m_hasEverConnected.store(true);
+        } else if (selected.empty()) {
+            setStatus("waiting for Roblox username or Mumble connection");
+        }
+
+        std::this_thread::sleep_for(std::chrono::milliseconds(config.pollIntervalMs));
+    }
+    setStatus("stopped");
+}
+
+bool BridgeClient::fetchOnce(httplib::Client& client, const std::string& path,
+                             const BridgeConfig& config) {
+    const std::string fullUrl = config.baseUrl + path;
+    try {
         auto response = client.Get(path);
-
         if (!response) {
-            std::lock_guard<std::mutex> lock(m_statusMutex);
-            m_lastStatus = "fetch failed: no HTTP response from " + fullUrl;
+            setStatus("fetch failed: no HTTP response from " + fullUrl);
             return false;
         }
-
         if (response->status < 200 || response->status >= 300) {
-            std::lock_guard<std::mutex> lock(m_statusMutex);
-
-            std::ostringstream ss;
-            ss
-                << "fetch failed: HTTP "
-                << response->status
-                << " body="
-                << response->body;
-
-            m_lastStatus = ss.str();
+            setStatus("fetch failed: HTTP " + std::to_string(response->status));
             return false;
         }
-
         const auto parsed = json::parse(response->body);
-
         PluginSnapshot snapshot;
-
         snapshot.nowMs = parsed.value("nowMs", 0ULL);
         snapshot.localRobloxUserId = jsonUint64OrZero(parsed, "localRobloxUserId");
-
         const auto playersIt = parsed.find("players");
-
         if (playersIt != parsed.end() && playersIt->is_array()) {
             snapshot.players.reserve(playersIt->size());
-
-            for (const auto& playerJson : *playersIt) {
+            for (const auto& playerJson : *playersIt)
                 snapshot.players.push_back(parsePlayer(playerJson));
-            }
         }
-
         const auto locksIt = parsed.find("txLocks");
-
         if (locksIt != parsed.end() && locksIt->is_array()) {
             snapshot.txLocks.reserve(locksIt->size());
-
-            for (const auto& lockJson : *locksIt) {
+            for (const auto& lockJson : *locksIt)
                 snapshot.txLocks.push_back(parseTxLock(lockJson));
-            }
         }
-
+        const std::size_t playerCount = snapshot.players.size();
         m_state.setSnapshot(std::move(snapshot));
+        setStatus("snapshot OK url=" + fullUrl + " players=" + std::to_string(playerCount));
         return true;
-    } catch (const std::exception& e) {
-        std::lock_guard<std::mutex> lock(m_statusMutex);
-        m_lastStatus = std::string("fetch failed: exception from ") + fullUrl + ": " + e.what();
-
-        std::cerr << "[TacticalRadio] Bridge fetch error: " << e.what() << "\n";
+    } catch (const std::exception& error) {
+        setStatus(std::string("fetch exception: ") + error.what());
         return false;
     } catch (...) {
-        std::lock_guard<std::mutex> lock(m_statusMutex);
-        m_lastStatus = "fetch failed: unknown exception from " + fullUrl;
-
-        std::cerr << "[TacticalRadio] Unknown bridge fetch error\n";
+        setStatus("fetch failed: unknown exception");
         return false;
     }
 }

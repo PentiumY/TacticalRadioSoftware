@@ -8,9 +8,7 @@
 #include <string>
 #include <thread>
 
-namespace httplib {
-    class Client;
-}
+namespace httplib { class Client; }
 
 class BridgeClient {
 public:
@@ -19,25 +17,26 @@ public:
 
     void start(BridgeConfig config);
     void stop();
+    void setMumbleUsername(const std::string& username);
+    std::string selectedRobloxUsername() const;
 
     bool hasEverConnected() const;
     std::string lastStatus() const;
 
 private:
     void run();
-    bool fetchOnce(httplib::Client& client);
-    std::string makeSnapshotPath() const;
+    bool fetchOnce(httplib::Client& client, const std::string& path, const BridgeConfig& config);
+    bool discoverSession(httplib::Client& client, const std::string& username,
+                         std::uint64_t& placeId, std::string& jobId);
+    void setStatus(const std::string& status);
 
-private:
     SharedState& m_state;
     BridgeConfig m_config;
-    std::string m_snapshotPath;
-
-    std::atomic<bool> m_running = false;
-    std::atomic<bool> m_hasEverConnected = false;
-
+    std::atomic<bool> m_running{false};
+    std::atomic<bool> m_hasEverConnected{false};
     mutable std::mutex m_statusMutex;
     std::string m_lastStatus = "not started";
-
+    std::string m_mumbleUsername;
+    std::string m_selectedRobloxUsername;
     std::thread m_thread;
 };

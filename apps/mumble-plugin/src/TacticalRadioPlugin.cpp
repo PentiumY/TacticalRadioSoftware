@@ -249,8 +249,9 @@ public:
         logAlways("[SpatialStable] init");
         logAlways("[SpatialStable] fileLog=" + m_logger.path());
         logAlways(
-            "[SpatialStable] config placeId=" + std::to_string(m_config.placeId) +
-            " jobId=" + m_config.jobId
+            "[SpatialStable] bridge=" + m_config.baseUrl +
+            " autoSession=" + (m_config.autoSession ? "true" : "false") +
+            " username=" + m_config.localRobloxUsername
         );
 
         m_contextString =
@@ -389,7 +390,7 @@ public:
             return false;
         }
 
-        const std::string localUsername = m_identity.username();
+        const std::string localUsername = m_bridge.selectedRobloxUsername();
 
         if (localUsername.empty()) {
             return false;
@@ -609,8 +610,9 @@ private:
 
     void runCacheUpdateOnce() noexcept {
         m_identity.refreshIfSynchronized(m_api);
+        m_bridge.setMumbleUsername(m_identity.username());
 
-        const std::string username = m_identity.username();
+        const std::string username = m_bridge.selectedRobloxUsername();
 
         if (username.empty()) {
             m_positionalCache.invalidate("NO_MUMBLE_USERNAME");
@@ -687,9 +689,21 @@ private:
         m_diagnostics.logHeartbeat(
             m_logger,
             m_positionalCache,
-            m_identity.username(),
+            m_bridge.selectedRobloxUsername(),
             counters
         );
+
+        // Temporary diagnostics: once every 10 seconds, not on every 50 ms tick.
+        static auto lastBridgeLog = std::chrono::steady_clock::time_point{};
+        const auto now = std::chrono::steady_clock::now();
+        if (lastBridgeLog.time_since_epoch().count() == 0 ||
+            now - lastBridgeLog >= std::chrono::seconds(10)) {
+            lastBridgeLog = now;
+            m_logger.logWithoutMumble(
+                "[BridgeDebug] selectedUsername=" + m_bridge.selectedRobloxUsername() +
+                " status=" + m_bridge.lastStatus()
+            );
+        }
     }
 
     void logAlways(const std::string& message) noexcept {
