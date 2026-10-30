@@ -1,8 +1,6 @@
 # Publishes a TacticalRadioSoftware release using GitHub CLI.
-# Run from the TacticalRadioSoftware repository root:
-#   .\Release\release.ps1 -Version 1.1.0
-# Preview without changing anything:
-#   .\Release\release.ps1 -Version 1.1.0 -DryRun
+# .\Release\release.ps1 -Version 1.1.0
+# .\Release\release.ps1 -Version 1.1.0 -DryRun
 [CmdletBinding()]
 param(
     [Parameter(Mandatory = $true)]
@@ -36,6 +34,31 @@ function Require-Command {
     }
 }
 
+# gh writes expected 404s to stderr. Running through Start-Process avoids
+# PowerShell 5.1 converting native stderr into a terminating error.
+function Test-GitHubReleaseExists {
+    param([string]$Repository, [string]$Tag)
+
+    $stdoutPath = [System.IO.Path]::GetTempFileName()
+    $stderrPath = [System.IO.Path]::GetTempFileName()
+    try {
+        $gh = (Get-Command 'gh.exe' -ErrorAction Stop).Source
+        $process = Start-Process -FilePath $gh -ArgumentList @(
+            'release', 'view', $Tag, '--repo', $Repository, '--json', 'tagName'
+        ) -NoNewWindow -Wait -PassThru -RedirectStandardOutput $stdoutPath -RedirectStandardError $stderrPath
+
+        if ($process.ExitCode -eq 0) { return $true }
+
+        $errorOutput = Get-Content -LiteralPath $stderrPath -Raw -ErrorAction SilentlyContinue
+        if ($errorOutput -match '(?i)release not found|HTTP 404|not found \(HTTP 404\)') {
+            return $false
+        }
+        throw "Could not check GitHub release $Tag (exit $($process.ExitCode)): $errorOutput"
+    } finally {
+        Remove-Item -LiteralPath $stdoutPath, $stderrPath -Force -ErrorAction SilentlyContinue
+    }
+}
+
 $root = (Resolve-Path (Join-Path $PSScriptRoot '..')).Path
 $tag = "v$Version"
 $installer = Join-Path $root "dist/installer/TacticalRadioSetup-$Version.exe"
@@ -44,13 +67,13 @@ $manifest = Join-Path $root "dist/installer/TacticalRadioSetup-$Version.manifest
 Require-Command 'git'
 Require-Command 'gh'
 
-# Publishing a release is meaningful only after source has been pushed.
+if (-not $MumbleRepo) { $MumbleRepo = Join-Path (Split-Path $root -Parent) 'TRS-Mumble' }
+
 if (-not $AllowDirty) {
     $dirty = & git -C $root status --porcelain --untracked-files=no
     if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect git status.' }
     if ($dirty) { throw 'Tracked changes are uncommitted in TacticalRadioSoftware. Commit them or use -AllowDirty.' }
 
-    if (-not $MumbleRepo) { $MumbleRepo = Join-Path (Split-Path $root -Parent) 'TRS-Mumble' }
     if (Test-Path (Join-Path $MumbleRepo '.git')) {
         $mumbleDirty = & git -C $MumbleRepo status --porcelain --untracked-files=no
         if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect TRS-Mumble git status.' }
@@ -60,18 +83,22 @@ if (-not $AllowDirty) {
 
 $head = (& git -C $root rev-parse HEAD).Trim()
 if ($LASTEXITCODE -ne 0) { throw 'Unable to read current git commit.' }
-$targetSha = (& git -C $root rev-parse "refs/remotes/origin/$TargetBranch" 2>$null)
+$targetShaResult = & git -C $root rev-parse "refs/remotes/origin/$TargetBranch" 2>$null
 if ($LASTEXITCODE -ne 0) { throw "Cannot find origin/$TargetBranch. Run git fetch origin first." }
-$targetSha = $targetSha.Trim()
+$targetSha = ($targetShaResult | Out-String).Trim()
 if ($head -ne $targetSha) {
     throw "HEAD ($head) differs from origin/$TargetBranch ($targetSha). Commit and push source, then run the release script."
 }
 
-# Do not silently overwrite an existing release or move an existing tag.
-& gh release view $tag --repo $Repository --json tagName *> $null
-if ($LASTEXITCODE -eq 0) { throw "Release $tag already exists on $Repository." }
+if (Test-GitHubReleaseExists -Repository $Repository -Tag $tag) {
+    throw "Release $tag already exists on $Repository."
+}
 
-& git -C $root tag --list $tag | ForEach-Object { if ($_ -eq $tag) { throw "Local git tag $tag already exists. Resolve it before publishing." } }
+$localTags = & git -C $root tag --list $tag
+if ($LASTEXITCODE -ne 0) { throw 'Unable to inspect local git tags.' }
+if ($localTags -contains $tag) {
+    throw "Local git tag $tag already exists. Resolve it before publishing."
+}
 
 if (-not $SkipBuild) {
     if ($DryRun) {
@@ -89,7 +116,7 @@ if (-not $SkipBuild) {
 if ($DryRun) {
     Write-Host "[DRY RUN] Would publish $tag on $Repository from $TargetBranch"
     Write-Host "[DRY RUN] Assets: $installer ; $manifest"
-    exit 0
+    return
 }
 
 foreach ($file in @($installer, $manifest)) {
